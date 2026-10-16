@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Gestor y Unificador de PDFs</title>
+  <!-- Tailwind CSS CDN para diseño moderno -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- pdf-lib CDN para procesamiento de PDFs en el cliente -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
+</head>
+<body class="bg-slate-100 min-h-screen text-slate-800 flex flex-col items-center p-4 sm:p-8">
+
+  <div class="max-w-3xl w-full bg-white rounded-2xl shadow-xl overflow-hidden border border-slate-200">
+    <!-- Header -->
+    <div class="bg-gradient-to-r from-blue-700 to-indigo-800 px-6 py-8 text-white text-center">
+      <h1 class="text-3xl font-extrabold tracking-tight">Unificador de PDFs</h1>
+      <p class="mt-2 text-blue-100 text-sm sm:text-base">Procesa tus documentos de forma rápida, segura y 100% privada en tu navegador.</p>
+    </div>
+
+    <div class="p-6 sm:p-8 space-y-6">
+      <!-- Selector de Modo / Opciones -->
+      <div>
+        <label class="block text-sm font-semibold text-slate-700 mb-2">Selecciona el modo de unión:</label>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <label class="relative flex items-center p-4 border rounded-xl cursor-pointer hover:border-blue-500 transition-colors has-[:checked]:border-blue-600 has-[:checked]:bg-blue-50/50">
+            <input type="radio" name="mergeMode" value="all" class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300" checked>
+            <div class="ml-3">
+              <span class="block text-sm font-bold text-slate-800">1. Unir PDFs completos</span>
+              <span class="block text-xs text-slate-500">Une todos los archivos con todas sus hojas en un solo PDF.</span>
+            </div>
+          </label>
+
+          <label class="relative flex items-center p-4 border rounded-xl cursor-pointer hover:border-blue-500 transition-colors has-[:checked]:border-blue-600 has-[:checked]:bg-blue-50/50">
+            <input type="radio" name="mergeMode" value="first_only" class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300">
+            <div class="ml-3">
+              <span class="block text-sm font-bold text-slate-800">2. Solo la 1ª página (Facturas)</span>
+              <span class="block text-xs text-slate-500">Extrae solo la primera hoja de cada archivo y únelas todas.</span>
+            </div>
+          </label>
+        </div>
+      </div>
+
+      <!-- Zona de Carga (Drag & Drop) -->
+      <div>
+        <div id="dropZone" class="border-2 border-dashed border-slate-300 hover:border-blue-500 rounded-xl p-8 text-center cursor-pointer transition-all bg-slate-50 hover:bg-slate-100/70">
+          <svg class="mx-auto h-12 w-12 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path>
+          </svg>
+          <p class="mt-3 text-sm font-semibold text-slate-700">Haz clic para seleccionar tus archivos PDF o arrástralos aquí</p>
+          <p class="text-xs text-slate-400 mt-1">Puedes seleccionar múltiples archivos a la vez</p>
+          <input type="file" id="fileInput" multiple accept="application/pdf" class="hidden">
+        </div>
+      </div>
+
+      <!-- Lista de Archivos Seleccionados -->
+      <div id="fileListContainer" class="hidden">
+        <div class="flex items-center justify-between mb-2">
+          <h2 class="text-sm font-semibold text-slate-700">Archivos seleccionados (<span id="fileCount">0</span>)</h2>
+          <button id="clearBtn" class="text-xs text-red-600 hover:text-red-700 font-medium">Limpiar lista</button>
+        </div>
+        <ul id="fileList" class="divide-y divide-slate-100 max-h-56 overflow-y-auto border border-slate-200 rounded-lg p-2 bg-slate-50 text-xs text-slate-600">
+        </ul>
+      </div>
+
+      <!-- Barra de Progreso y Estado -->
+      <div id="statusContainer" class="hidden space-y-2">
+        <div class="w-full bg-slate-200 rounded-full h-2.5 overflow-hidden">
+          <div id="progressBar" class="bg-blue-600 h-2.5 rounded-full transition-all duration-300" style="width: 0%"></div>
+        </div>
+        <p id="statusText" class="text-center text-xs font-medium text-slate-600">Procesando...</p>
+      </div>
+
+      <!-- Botón de Acción -->
+      <div>
+        <button id="processBtn" disabled class="w-full py-3.5 px-4 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white font-bold rounded-xl shadow transition duration-150 ease-in-out flex items-center justify-center space-x-2 text-sm sm:text-base">
+          <span>Procesar y Descargar PDF</span>
+        </button>
+      </div>
+
+      <!-- Nota de Privacidad -->
+      <div class="text-center text-xs text-slate-400 pt-2 border-t border-slate-100">
+        🔒 Tus documentos nunca salen de tu dispositivo ni se envían a ningún servidor en la nube.
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const fileInput = document.getElementById('fileInput');
+    const dropZone = document.getElementById('dropZone');
+    const fileListContainer = document.getElementById('fileListContainer');
+    const fileList = document.getElementById('fileList');
+    const fileCount = document.getElementById('fileCount');
+    const clearBtn = document.getElementById('clearBtn');
+    const processBtn = document.getElementById('processBtn');
+    const statusContainer = document.getElementById('statusContainer');
+    const progressBar = document.getElementById('progressBar');
+    const statusText = document.getElementById('statusText');
+
+    let selectedFiles = [];
+
+    dropZone.addEventListener('click', () => fileInput.click());
+
+    dropZone.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      dropZone.classList.add('border-blue-500', 'bg-blue-50/50');
+    });
+
+    dropZone.addEventListener('dragleave', () => {
+      dropZone.classList.remove('border-blue-500', 'bg-blue-50/50');
+    });
+
+    dropZone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dropZone.classList.remove('border-blue-500', 'bg-blue-50/50');
+      if (e.dataTransfer.files.length > 0) {
+        handleFiles(e.dataTransfer.files);
+      }
+    });
+
+    fileInput.addEventListener('change', (e) => {
+      if (e.target.files.length > 0) {
+        handleFiles(e.target.files);
+      }
+    });
+
+    function handleFiles(files) {
+      for (const file of files) {
+        if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
+          selectedFiles.push(file);
+        }
+      }
+      updateUI();
+    }
+
+    function updateUI() {
+      if (selectedFiles.length > 0) {
+        fileListContainer.classList.remove('hidden');
+        processBtn.disabled = false;
+        fileCount.innerText = selectedFiles.length;
+        fileList.innerHTML = '';
+        selectedFiles.forEach((f, idx) => {
+          const li = document.createElement('li');
+          li.className = 'py-1.5 px-2 flex justify-between items-center';
+          li.innerHTML = `
+            <span class="truncate font-medium text-slate-700">${idx + 1}. ${f.name}</span>
+            <span class="text-slate-400 whitespace-nowrap ml-2">${(f.size / (1024 * 1024)).toFixed(2)} MB</span>
+          `;
+          fileList.appendChild(li);
+        });
+      } else {
+        fileListContainer.classList.add('hidden');
+        processBtn.disabled = true;
+        fileCount.innerText = '0';
+        fileList.innerHTML = '';
+      }
+    }
+
+    clearBtn.addEventListener('click', () => {
+      selectedFiles = [];
+      fileInput.value = '';
+      updateUI();
+    });
+
+    processBtn.addEventListener('click', async () => {
+      if (selectedFiles.length === 0) return;
+
+      const mode = document.querySelector('input[name="mergeMode"]:checked').value;
+      
+      processBtn.disabled = true;
+      statusContainer.classList.remove('hidden');
+      progressBar.style.width = '5%';
+      statusText.innerText = 'Inicializando motor PDF...';
+
+      try {
+        const mergedPdf = await PDFLib.PDFDocument.create();
+        const total = selectedFiles.length;
+
+        for (let i = 0; i < total; i++) {
+          const file = selectedFiles[i];
+          statusText.innerText = `Procesando (${i + 1}/${total}): ${file.name}`;
+          progressBar.style.width = `${Math.round(((i + 1) / total) * 90)}%`;
+
+          const arrayBuffer = await file.arrayBuffer();
+          const doc = await PDFLib.PDFDocument.load(arrayBuffer);
+
+          if (mode === 'first_only') {
+            // Extrae solo la primera hoja (índice 0)
+            if (doc.getPageCount() > 0) {
+              const [copiedPage] = await mergedPdf.copyPages(doc, [0]);
+              mergedPdf.addPage(copiedPage);
+            }
+          } else {
+            // Une todas las hojas del archivo
+            const pageIndices = doc.getPageIndices();
+            const copiedPages = await mergedPdf.copyPages(doc, pageIndices);
+            copiedPages.forEach(p => mergedPdf.addPage(p));
+          }
+        }
+
+        statusText.innerText = 'Generando archivo unificado final...';
+        progressBar.style.width = '95%';
+
+        const pdfBytes = await mergedPdf.save();
+        const blob = new Blob([pdfBytes], { type: 'application/pdf' });
+        const url = URL.createObjectURL(blob);
+
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = mode === 'first_only' ? 'facturas_primeras_hojas_unificadas.pdf' : 'documentos_unificados.pdf';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+
+        progressBar.style.width = '100%';
+        statusText.innerText = '¡Completado con éxito! Tu descarga ha comenzado.';
+
+        setTimeout(() => {
+          statusContainer.classList.add('hidden');
+          processBtn.disabled = false;
+        }, 3000);
+
+      } catch (err) {
+        console.error(err);
+        alert('Ocurrió un error al procesar los documentos: ' + err.message);
+        statusContainer.classList.add('hidden');
+        processBtn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>
