@@ -934,12 +934,12 @@ async function geminiRequest(model, key, body, { retries = 3, timeout = 90000, o
       for (let s = wait; s > 0; s--) { onWait && onWait(res.status === 429 ? `Cuota de Gemini alcanzada, reintentando en ${s}s…` : `Gemini ocupado, reintentando en ${s}s…`); await sleep(1000); }
       continue;
     }
-    if (res.status === 429) throw new Error('Límite de uso de la API gratuita alcanzado');
+    if (res.status === 429) throw Object.assign(new Error('Límite de uso de la API gratuita alcanzado para ese modelo'), { kind: 'busy' });
     if (/API key not valid|API_KEY_INVALID|expired/i.test(msg)) throw Object.assign(new Error(BAD_KEY_MSG), { kind: 'badkey' });
     if (BLOCK_RE.test(msg) && res.status === 403) throw Object.assign(new Error(BLOCKED_MSG), { kind: 'blocked' });
     if (res.status === 400 || res.status === 401 || res.status === 403) throw new Error(`Gemini rechazó la petición (${res.status}): ${msg.slice(0, 160)}`);
-    if (res.status === 404) throw new Error(`Modelo no encontrado (${model})`);
-    throw new Error(`Error ${res.status} de Gemini ${msg.slice(0, 120)}`);
+    if (res.status === 404) throw Object.assign(new Error(`Modelo no encontrado (${model})`), { kind: 'nomodel' });
+    throw Object.assign(new Error(`Error ${res.status} de Gemini ${msg.slice(0, 120)}`), { kind: res.status >= 500 ? 'busy' : 'other' });
   }
 }
 const GEM = 'https://generativelanguage.googleapis.com/v1beta/';
@@ -959,18 +959,23 @@ function pickModel(list) {                                                // pre
   const flash = list.filter(n => /^gemini-[\d.]+-flash$/.test(n)).sort((a, b) => ver(b) - ver(a));
   return flash[0] || list.find(n => n === 'gemini-flash-latest') || list.find(n => /flash/.test(n) && !/(image|tts|live|embed)/.test(n)) || list[0] || '';
 }
-async function geminiCall(model, key, body, opts) {                       // si el modelo no existe (404) busca uno válido y reintenta
-  key = cleanKey(key);
+const usable = n => /^gemini-/.test(n) && !/(image|tts|live|embed|robotics|computer-use|audio|aqa|learnlm)/.test(n);
+function candidateModels(list, first) {                                  // modelos de texto a probar, el elegido primero (máx. 6)
+  const flash = list.filter(n => usable(n) && /flash/.test(n)), rest = list.filter(n => usable(n) && !/flash/.test(n));
+  return [...new Set([first, pickModel(list), ...flash, ...rest].filter(Boolean))].slice(0, 6);
+}
+async function geminiCall(model, key, body, opts) {                       // si el modelo no existe o está saturado, prueba otros
+  key = cleanKey(key); model = cleanModel(model);
   try { return await geminiRequest(model, key, body, opts); }
   catch (e) {
-    if (!/Modelo no encontrado/.test(e.message)) throw e;
-    const tried = new Set([model]), list = await listGeminiModels(key), first = pickModel(list);
-    for (const alt of [first, ...list]) {
-      if (!alt || tried.has(alt)) continue; tried.add(alt);
-      try { const r = await geminiRequest(alt, key, body, opts); store.set('aiModel', alt); toast(`Modelo "${model}" no disponible; se usará "${alt}"`, 'warn', 6000); return r; }
-      catch (e2) { if (!/Modelo no encontrado/.test(e2.message)) throw e2; }
+    if (e.kind !== 'nomodel' && e.kind !== 'busy' && !/Modelo no encontrado/.test(e.message)) throw e;
+    let list; try { list = await listGeminiModels(key); } catch { throw e; }
+    let last = e;
+    for (const alt of candidateModels(list, '').filter(n => n !== model)) {
+      try { const r = await geminiRequest(alt, key, body, { ...opts, retries: 1 }); store.set('aiModel', alt); toast(`"${model}" no respondió; se usó "${alt}"`, 'warn', 6000); return r; }
+      catch (e2) { last = e2; if (e2.kind !== 'nomodel' && e2.kind !== 'busy') throw e2; }
     }
-    throw new Error(`Ningún modelo Gemini respondió con tu clave. Abre ✨ IA Gemini y pulsa "Probar conexión".`);
+    throw last;
   }
 }
 const AI_SCHEMA = { type: 'OBJECT', properties: {
@@ -1456,13 +1461,14 @@ $('#aiTest').onclick = async () => {
         const list = await listGeminiModels(key);
         if (!list.length) throw new Error('Sin modelos Gemini disponibles');
         $('#aiModels').innerHTML = list.map(n => `<option value="${esc(n)}">`).join('');
-        const wanted = cleanModel($('#aiModel').value), order = [...new Set([list.includes(wanted) ? wanted : '', pickModel(list), ...list].filter(Boolean))];
-        let used = '', lastErr = null;
-        for (const model of order) {
+        const wanted = cleanModel($('#aiModel').value);
+        let used = '', lastErr = null, busy = false;
+        for (const model of candidateModels(list, wanted)) {
           say('#475569', `Probando "${model}" en ${NAME[prov]}…`);
           try { await geminiRequest(model, key, { contents: [{ parts: [{ text: 'Responde solo: OK' }] }] }, { retries: 1, timeout: 25000 }); used = model; break; }
-          catch (e) { lastErr = e; if (!/Modelo no encontrado/.test(e.message)) throw e; }
+          catch (e) { lastErr = e; if (e.kind === 'busy') busy = true; else if (e.kind !== 'nomodel') throw e; }
         }
+        if (!used && busy) return say('#b45309', `✔ Tu clave es válida en ${NAME[prov]}, pero Google tiene los modelos saturados ahora mismo (error temporal). Pulsa Guardar e inténtalo de nuevo en unos minutos.`);
         if (!used) throw lastErr || new Error('Ningún modelo respondió');
         $('#aiModel').value = used;
         return say('#047857', `✔ Conexión correcta con ${NAME[prov]} · modelo "${used}". Pulsa Guardar.`);
