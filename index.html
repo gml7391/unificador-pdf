@@ -434,8 +434,9 @@
     <div class="grid sm:grid-cols-2 gap-3">
       <div>
         <label class="lbl" for="aiModel">Modelo</label>
-        <input id="aiModel" class="field" list="aiModels" value="gemini-2.5-flash" spellcheck="false">
-        <datalist id="aiModels"><option value="gemini-2.5-flash"><option value="gemini-2.5-flash-lite"><option value="gemini-2.5-pro"></datalist>
+        <input id="aiModel" class="field" list="aiModels" value="gemini-flash-latest" spellcheck="false">
+        <datalist id="aiModels"><option value="gemini-flash-latest"><option value="gemini-2.5-flash"><option value="gemini-2.5-flash-lite"><option value="gemini-2.5-pro"></datalist>
+        <p class="hint">Si falla, pulsa «Probar conexión»: se detecta solo.</p>
       </div>
       <label class="chk sm:mt-6"><input type="checkbox" id="aiImage" checked><span>Enviar la imagen de la página<small>Más preciso y necesario para escaneos.</small></span></label>
     </div>
@@ -919,8 +920,32 @@ async function geminiRequest(model, key, body, { retries = 3, timeout = 90000, o
     }
     if (res.status === 429) throw new Error('Límite de uso de la API gratuita alcanzado');
     if (res.status === 400 || res.status === 401 || res.status === 403) throw new Error(`Gemini rechazó la petición (${res.status}): ${msg.slice(0, 160)}`);
-    if (res.status === 404) throw new Error('Modelo no encontrado: revisa el nombre en la configuración de IA');
+    if (res.status === 404) throw new Error(`Modelo no encontrado (${model})`);
     throw new Error(`Error ${res.status} de Gemini ${msg.slice(0, 120)}`);
+  }
+}
+const GEM = 'https://generativelanguage.googleapis.com/v1beta/';
+async function listGeminiModels(key) {                                   // modelos que esta clave puede usar con generateContent
+  let res;
+  try { res = await fetch(GEM + 'models?pageSize=200', { headers: { 'x-goog-api-key': key } }); }
+  catch { throw new Error('Sin conexión con Google'); }
+  if (!res.ok) { let msg = ''; try { msg = (await res.json()).error?.message || ''; } catch {} throw new Error(`Google no aceptó la clave (${res.status}) ${msg.slice(0, 140)}`); }
+  const j = await res.json();
+  return (j.models || []).filter(m => (m.supportedGenerationMethods || []).includes('generateContent') && /^models\/gemini/.test(m.name)).map(m => m.name.replace(/^models\//, ''));
+}
+function pickModel(list) {                                                // prefiere el Flash estable más reciente
+  const ver = n => parseFloat((/gemini-(\d+(?:\.\d+)?)/.exec(n) || [0, 0])[1]);
+  const flash = list.filter(n => /^gemini-[\d.]+-flash$/.test(n)).sort((a, b) => ver(b) - ver(a));
+  return flash[0] || list.find(n => n === 'gemini-flash-latest') || list.find(n => /flash/.test(n) && !/(image|tts|live|embed)/.test(n)) || list[0] || '';
+}
+async function geminiCall(model, key, body, opts) {                       // si el modelo no existe (404) busca uno válido y reintenta
+  try { return await geminiRequest(model, key, body, opts); }
+  catch (e) {
+    if (!/Modelo no encontrado/.test(e.message)) throw e;
+    const list = await listGeminiModels(key), alt = pickModel(list);
+    if (!alt || alt === model) throw new Error(`El modelo "${model}" no existe para tu clave. Abre ✨ IA Gemini y pulsa "Probar conexión" para elegir uno.`);
+    store.set('aiModel', alt); toast(`Modelo "${model}" no disponible; se usará "${alt}"`, 'warn', 6000);
+    return geminiRequest(alt, key, body, opts);
   }
 }
 const AI_SCHEMA = { type: 'OBJECT', properties: {
@@ -940,7 +965,7 @@ Reglas:
 - Si un dato no existe, usa "" (texto) o 0 (número). No inventes.${text ? `\n\nTexto extraído de la página (puede tener errores):\n${text.slice(0, 5000)}` : ''}`;
   const parts = [{ text: prompt }];
   if (imageB64) parts.push({ inline_data: { mime_type: 'image/jpeg', data: imageB64 } });
-  const data = await geminiRequest(model, key, { contents: [{ parts }], generationConfig: { temperature: 0, responseMimeType: 'application/json', responseSchema: AI_SCHEMA } }, { onWait });
+  const data = await geminiCall(model, key, { contents: [{ parts }], generationConfig: { temperature: 0, responseMimeType: 'application/json', responseSchema: AI_SCHEMA } }, { onWait });
   if (data.promptFeedback?.blockReason) throw new Error('Gemini bloqueó el contenido: ' + data.promptFeedback.blockReason);
   const out = (data.candidates?.[0]?.content?.parts || []).map(p => p.text || '').join('').trim().replace(/^```(?:json)?|```$/g, '');
   if (!out) throw new Error('Respuesta vacía de Gemini');
@@ -1376,7 +1401,7 @@ $('#btnDelete').onclick = () => withSplit(async () => {
 /* =====================================================================
    IA · modal de configuración
    ===================================================================== */
-const getAiModel = () => store.get('aiModel', 'gemini-2.5-flash') || 'gemini-2.5-flash';
+const getAiModel = () => store.get('aiModel', 'gemini-flash-latest') || 'gemini-flash-latest';
 const getAiImage = () => store.get('aiImage', true);
 function updateAiUi() {
   const has = !!getKey(), b = $('#aiBadge');
@@ -1389,16 +1414,23 @@ $('#btnAi').onclick = openAi; $('#aiClose').onclick = () => $('#dlgAi').close();
 $('#dlgAi').addEventListener('click', e => { if (e.target === e.currentTarget) e.currentTarget.close(); });
 $('#aiShow').onclick = () => { const k = $('#aiKey'); k.type = k.type === 'password' ? 'text' : 'password'; };
 $('#aiSave').onclick = () => {
-  setKey($('#aiKey').value.trim()); store.set('aiModel', $('#aiModel').value.trim() || 'gemini-2.5-flash'); store.set('aiImage', $('#aiImage').checked);
+  setKey($('#aiKey').value.trim()); store.set('aiModel', $('#aiModel').value.trim() || 'gemini-flash-latest'); store.set('aiImage', $('#aiImage').checked);
   updateAiUi(); $('#dlgAi').close(); toast(getKey() ? 'Clave guardada en este navegador' : 'Clave eliminada', 'ok');
 };
 $('#aiDelete').onclick = () => { setKey(''); $('#aiKey').value = ''; updateAiUi(); $('#aiTestMsg').textContent = 'Clave eliminada.'; };
 $('#aiTest').onclick = async () => {
-  const key = $('#aiKey').value.trim(), model = $('#aiModel').value.trim() || 'gemini-2.5-flash', m = $('#aiTestMsg');
-  if (!key) { m.style.color = '#b45309'; m.textContent = 'Pega primero tu clave.'; return; }
-  m.style.color = '#475569'; m.textContent = 'Probando…'; $('#aiTest').disabled = true;
-  try { await geminiRequest(model, key, { contents: [{ parts: [{ text: 'Responde solo: OK' }] }] }, { retries: 0, timeout: 20000 }); m.style.color = '#047857'; m.textContent = '✔ Conexión correcta con ' + model; }
-  catch (e) { m.style.color = '#b91c1c'; m.textContent = '✖ ' + (e.message || e); }
+  const key = $('#aiKey').value.trim(), m = $('#aiTestMsg'), say = (c, t) => { m.style.color = c; m.textContent = t; };
+  if (!key) return say('#b45309', 'Pega primero tu clave.');
+  say('#475569', 'Consultando los modelos de tu clave…'); $('#aiTest').disabled = true;
+  try {
+    const list = await listGeminiModels(key);
+    if (!list.length) throw new Error('Tu clave es válida pero no tiene modelos Gemini disponibles');
+    $('#aiModels').innerHTML = list.map(n => `<option value="${esc(n)}">`).join('');
+    let model = $('#aiModel').value.trim();
+    if (!list.includes(model)) { const alt = pickModel(list); say('#475569', `"${model}" no está disponible; usando "${alt}"…`); model = alt; $('#aiModel').value = alt; }
+    await geminiRequest(model, key, { contents: [{ parts: [{ text: 'Responde solo: OK' }] }] }, { retries: 1, timeout: 25000 });
+    say('#047857', `✔ Conexión correcta · modelo "${model}" · ${list.length} modelos disponibles. Pulsa Guardar.`);
+  } catch (e) { say('#b91c1c', '✖ ' + (e.message || e)); }
   finally { $('#aiTest').disabled = false; }
 };
 
