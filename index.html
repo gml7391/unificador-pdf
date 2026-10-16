@@ -1,233 +1,1413 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Gestor y Unificador de PDFs</title>
-  <!-- Tailwind CSS CDN para diseño moderno -->
-  <script src="https://cdn.tailwindcss.com"></script>
-  <!-- pdf-lib CDN para procesamiento de PDFs en el cliente -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
-</head>
-<body class="bg-slate-100 min-h-screen text-slate-800 flex flex-col items-center p-4 sm:p-8">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FacturaPro Suite · Extractor y gestor de PDFs</title>
+<meta name="description" content="Extrae la 1ª página de tus facturas, lee RUC, serie, fecha y total, exporta a Excel, une y divide PDFs. Todo local en tu navegador.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%232563eb'/%3E%3Cpath d='M20 14h17l9 9v27a2 2 0 0 1-2 2H20a2 2 0 0 1-2-2V16a2 2 0 0 1 2-2z' fill='%23fff'/%3E%3Cpath d='M37 14v9h9' fill='%23bfdbfe'/%3E%3Cpath d='M24 32h16M24 38h16M24 44h10' stroke='%232563eb' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
 
-  <div class="max-w-3xl w-full bg-white rounded-2xl shadow-xl overflow-hidden border border-slate-200">
-    <!-- Header -->
-    <div class="bg-gradient-to-r from-blue-700 to-indigo-800 px-6 py-8 text-white text-center">
-      <h1 class="text-3xl font-extrabold tracking-tight">Unificador de PDFs</h1>
-      <p class="mt-2 text-blue-100 text-sm sm:text-base">Procesa tus documentos de forma rápida, segura y 100% privada en tu navegador.</p>
+<!-- Tailwind CSS -->
+<script src="https://cdn.tailwindcss.com"></script>
+<!-- pdf-lib: copia de páginas SIN recomprimir ni perder calidad vectorial -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
+<!-- JSZip: empaquetado .zip -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<!-- pdf.js: lectura de texto, miniaturas y vista previa -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<!-- SheetJS: exportación a Excel -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<!-- Tesseract.js (OCR) se carga solo cuando se necesita -->
+<script>
+  if (window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+</script>
+
+<style>
+  :root { --brand:#2563eb; --brand-d:#1d4ed8; --line:#e2e8f0; }
+  html { scroll-behavior: smooth; }
+  body { background:#f1f5f9; color:#0f172a; font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+  .is-hidden { display:none !important; }
+  .card { background:#fff; border:1px solid var(--line); border-radius:16px; box-shadow:0 1px 2px rgba(15,23,42,.04); }
+  .step { display:inline-flex; align-items:center; justify-content:center; width:1.6rem; height:1.6rem; border-radius:999px; background:#dbeafe; color:#1d4ed8; font-weight:800; font-size:.8rem; flex:none; }
+
+  .btn { display:inline-flex; align-items:center; justify-content:center; gap:.4rem; font-weight:600; font-size:.8125rem; line-height:1.1; padding:.7rem 1.05rem; border-radius:.75rem; border:1px solid transparent; cursor:pointer; transition:background .15s, box-shadow .15s, transform .05s; text-align:center; }
+  .btn:active:not(:disabled) { transform:translateY(1px); }
+  .btn:disabled { opacity:.45; cursor:not-allowed; }
+  .btn:focus-visible, .field:focus-visible, .dz:focus-visible, .tab:focus-visible, .pg:focus-visible { outline:3px solid #93c5fd; outline-offset:1px; }
+  .btn-primary { background:var(--brand); color:#fff; box-shadow:0 1px 2px rgba(37,99,235,.35); }
+  .btn-primary:hover:not(:disabled) { background:var(--brand-d); }
+  .btn-ok { background:#059669; color:#fff; } .btn-ok:hover:not(:disabled) { background:#047857; }
+  .btn-indigo { background:#4f46e5; color:#fff; } .btn-indigo:hover:not(:disabled) { background:#4338ca; }
+  .btn-teal { background:#0f766e; color:#fff; } .btn-teal:hover:not(:disabled) { background:#115e59; }
+  .btn-ghost { background:#fff; border-color:#cbd5e1; color:#334155; } .btn-ghost:hover:not(:disabled) { background:#f1f5f9; }
+  .btn-danger { background:#fff; border-color:#fecaca; color:#dc2626; } .btn-danger:hover:not(:disabled) { background:#fef2f2; }
+  .btn-sm { padding:.42rem .7rem; font-size:.75rem; border-radius:.6rem; }
+  .btn-xs { padding:.25rem .5rem; font-size:.7rem; border-radius:.5rem; }
+
+  .field { width:100%; font-size:.8125rem; padding:.55rem .75rem; border:1px solid #cbd5e1; border-radius:.65rem; background:#fff; color:#0f172a; }
+  .field:focus { outline:none; border-color:var(--brand); box-shadow:0 0 0 3px rgba(147,197,253,.55); }
+  .field::placeholder { color:#94a3b8; }
+  .lbl { display:block; font-size:.72rem; font-weight:700; color:#475569; margin-bottom:.3rem; }
+  .hint { font-size:.72rem; color:#64748b; margin-top:.3rem; line-height:1.35; }
+  .chk { display:flex; gap:.55rem; align-items:flex-start; font-size:.8rem; cursor:pointer; line-height:1.3; }
+  .chk input { margin-top:.15rem; width:1rem; height:1rem; accent-color:var(--brand); flex:none; }
+  .chk small { display:block; color:#64748b; font-size:.72rem; }
+
+  .dz { border:2px dashed #cbd5e1; border-radius:16px; padding:1.8rem 1rem; text-align:center; cursor:pointer; transition:.15s; background:#f8fafc; }
+  .dz:hover, .dz.over { border-color:var(--brand); background:#eff6ff; }
+  .dz.over { transform:scale(1.005); }
+
+  .tab { display:flex; align-items:center; gap:.65rem; width:100%; text-align:left; padding:.75rem .9rem; border-radius:.8rem; font-size:.84rem; font-weight:600; color:#475569; white-space:nowrap; transition:.15s; border:1px solid transparent; cursor:pointer; background:transparent; }
+  .tab:hover { background:#e2e8f0; }
+  .tab[aria-selected="true"] { background:#fff; color:#1d4ed8; border-color:#bfdbfe; box-shadow:0 1px 3px rgba(37,99,235,.12); }
+  .tab .ico { font-size:1.15rem; }
+
+  .qrow { display:flex; align-items:center; gap:.6rem; padding:.4rem .55rem; border-radius:.75rem; background:#fff; border:1px solid var(--line); transition:box-shadow .15s, border-color .15s; }
+  .qrow:hover { border-color:#bfdbfe; box-shadow:0 1px 4px rgba(37,99,235,.1); }
+  .qrow.dragging { opacity:.4; }
+  .qrow.dropbefore { box-shadow:0 -3px 0 0 var(--brand); }
+  .grip { cursor:grab; color:#cbd5e1; user-select:none; padding:0 .15rem; font-size:1rem; line-height:1; }
+  .qrow:hover .grip { color:#64748b; }
+  .thumb { width:34px; height:46px; border-radius:5px; border:1px solid #e2e8f0; background:#f1f5f9; object-fit:cover; flex:none; }
+  .badge { display:inline-flex; align-items:center; gap:.25rem; padding:.12rem .5rem; border-radius:999px; font-size:.68rem; font-weight:700; white-space:nowrap; }
+  .b-gray { background:#f1f5f9; color:#64748b; } .b-blue { background:#dbeafe; color:#1d4ed8; }
+  .b-ok { background:#d1fae5; color:#047857; } .b-warn { background:#fef3c7; color:#b45309; } .b-bad { background:#fee2e2; color:#b91c1c; }
+  .spin { width:.8rem; height:.8rem; border-radius:50%; border:2px solid #bfdbfe; border-top-color:var(--brand); animation:spin .7s linear infinite; display:inline-block; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+
+  .custom-scroll::-webkit-scrollbar { width:8px; height:8px; }
+  .custom-scroll::-webkit-scrollbar-thumb { background:#cbd5e1; border-radius:8px; }
+  .custom-scroll::-webkit-scrollbar-track { background:transparent; }
+
+  /* Tabla de datos */
+  table.dt { border-collapse:separate; border-spacing:0; width:100%; font-size:.75rem; }
+  table.dt th { position:sticky; top:0; z-index:2; background:#f1f5f9; color:#475569; text-align:left; font-weight:700; padding:.55rem .5rem; border-bottom:1px solid var(--line); white-space:nowrap; }
+  table.dt td { padding:.2rem .3rem; border-bottom:1px solid #f1f5f9; vertical-align:middle; background:#fff; }
+  table.dt tr.has-bad td { background:#fef2f2; } table.dt tr.has-warn td { background:#fffbeb; }
+  table.dt .cell { width:100%; min-width:5rem; font-size:.75rem; padding:.3rem .4rem; border:1px solid transparent; border-radius:.4rem; background:transparent; }
+  table.dt .cell:hover { border-color:#cbd5e1; background:#fff; }
+  table.dt .cell:focus { outline:none; border-color:var(--brand); background:#fff; box-shadow:0 0 0 2px rgba(147,197,253,.6); }
+  table.dt .num { text-align:right; font-variant-numeric:tabular-nums; }
+  table.dt .cell[data-f=tipo] { min-width:6.5rem; } table.dt .cell[data-f=ruc] { min-width:8.5rem; } table.dt .cell[data-f=razon] { min-width:13rem; }
+  table.dt .cell[data-f=serie] { min-width:7.5rem; } table.dt .cell[data-f=fecha] { min-width:6.8rem; } table.dt .cell[data-f=moneda] { min-width:4.2rem; }
+  table.dt .cell.num { min-width:5.8rem; }
+  table.dt .mono { font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  table.dt td.sticky-c, table.dt th.sticky-c { position:sticky; left:0; z-index:1; }
+  table.dt th.sticky-c { z-index:3; }
+
+  /* Miniaturas de páginas (pestaña Dividir) */
+  .pg { position:relative; display:flex; flex-direction:column; align-items:center; gap:.25rem; padding:.4rem; border-radius:.75rem; border:2px solid transparent; background:#fff; cursor:pointer; transition:.12s; }
+  .pg:hover { background:#eff6ff; }
+  .pg canvas { width:100%; height:auto; aspect-ratio:3/4; background:#f1f5f9; border-radius:4px; box-shadow:0 1px 3px rgba(15,23,42,.18); }
+  .pg .n { font-size:.72rem; font-weight:700; color:#475569; }
+  .pg.sel { border-color:var(--brand); background:#dbeafe; }
+  .pg.sel .n { color:#1d4ed8; }
+  .pg .zoom { position:absolute; top:.55rem; right:.55rem; width:1.5rem; height:1.5rem; border-radius:999px; background:rgba(15,23,42,.65); color:#fff; font-size:.7rem; display:none; align-items:center; justify-content:center; }
+  .pg:hover .zoom { display:flex; }
+  .pg.sel::after { content:"✓"; position:absolute; top:.5rem; left:.5rem; width:1.3rem; height:1.3rem; border-radius:999px; background:var(--brand); color:#fff; font-size:.75rem; font-weight:800; display:flex; align-items:center; justify-content:center; }
+
+  dialog { border:0; padding:0; border-radius:18px; box-shadow:0 25px 60px rgba(15,23,42,.35); max-width:calc(100vw - 1.5rem); max-height:calc(100vh - 1.5rem); color:#0f172a; }
+  dialog::backdrop { background:rgba(15,23,42,.6); backdrop-filter:blur(2px); }
+
+  #toasts { position:fixed; right:1rem; bottom:1rem; z-index:100; display:flex; flex-direction:column; gap:.5rem; max-width:min(92vw, 380px); }
+  .toast { padding:.7rem .9rem; border-radius:.8rem; font-size:.8rem; font-weight:600; color:#fff; box-shadow:0 8px 24px rgba(15,23,42,.25); animation:tin .2s ease-out; line-height:1.35; }
+  @keyframes tin { from { opacity:0; transform:translateY(8px); } }
+  .t-info { background:#1e293b; } .t-ok { background:#047857; } .t-warn { background:#b45309; } .t-bad { background:#b91c1c; }
+  @media (prefers-reduced-motion: reduce) { * { animation-duration:.01ms !important; transition-duration:.01ms !important; } }
+</style>
+</head>
+
+<body class="min-h-screen pb-16">
+<noscript><div style="padding:1rem;background:#fee2e2;color:#991b1b;text-align:center">Esta aplicación necesita JavaScript habilitado.</div></noscript>
+
+<!-- ============ CABECERA ============ -->
+<header class="bg-slate-900 text-white">
+  <div class="max-w-7xl mx-auto px-4 py-3.5 flex flex-wrap items-center justify-between gap-3">
+    <div class="flex items-center gap-3">
+      <div class="bg-blue-600 p-2 rounded-xl">
+        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+      </div>
+      <div>
+        <h1 class="text-lg font-bold tracking-tight leading-tight">FacturaPro Suite</h1>
+        <p class="text-[11px] text-slate-400 leading-tight">Procesamiento 100% en tu navegador · sin subir archivos · sin pérdida de calidad</p>
+      </div>
+    </div>
+    <button id="btnAi" class="text-xs bg-slate-800 hover:bg-slate-700 border border-slate-700 px-3 py-2 rounded-lg flex items-center gap-2 transition" aria-haspopup="dialog">
+      <span>✨ IA Gemini</span>
+      <span id="aiBadge" class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-700 text-slate-300">Desactivada</span>
+    </button>
+  </div>
+</header>
+
+<div id="libBanner" class="is-hidden bg-red-50 border-b border-red-200 text-red-800 text-xs">
+  <div class="max-w-7xl mx-auto px-4 py-2.5"></div>
+</div>
+
+<div class="max-w-7xl mx-auto px-4 mt-5 grid gap-5 grid-cols-[minmax(0,1fr)] lg:grid-cols-[230px_minmax(0,1fr)]">
+
+  <!-- ============ NAVEGACIÓN ============ -->
+  <aside class="min-w-0">
+    <nav class="flex lg:flex-col gap-1.5 overflow-x-auto custom-scroll pb-1 lg:pb-0 lg:sticky lg:top-4" role="tablist" aria-label="Herramientas">
+      <button class="tab" role="tab" data-tab="facturas" aria-selected="true"><span class="ico">🧾</span><span>Extractor de facturas<small class="block text-[10px] font-normal text-slate-400">1ª página · datos · Excel</small></span></button>
+      <button class="tab" role="tab" data-tab="unir" aria-selected="false"><span class="ico">📚</span><span>Unir PDFs<small class="block text-[10px] font-normal text-slate-400">Todas las páginas</small></span></button>
+      <button class="tab" role="tab" data-tab="dividir" aria-selected="false"><span class="ico">✂️</span><span>Dividir / Extraer<small class="block text-[10px] font-normal text-slate-400">Rangos y separación</small></span></button>
+      <div class="hidden lg:block mt-3 p-3 rounded-xl bg-white border border-slate-200 text-[11px] text-slate-500 leading-relaxed">
+        <b class="text-slate-700">🔒 Privacidad</b><br>
+        Tus PDFs se procesan en tu equipo. Solo si activas la IA de Gemini se envía la 1ª página a Google para leerla.
+      </div>
+    </nav>
+  </aside>
+
+  <main class="min-w-0">
+
+<!-- ======================================================
+     PESTAÑA 1 · EXTRACTOR DE FACTURAS
+     ====================================================== -->
+<section id="pane-facturas" class="space-y-5" role="tabpanel">
+
+  <div class="card p-5">
+    <h2 class="text-lg font-bold">Extractor inteligente de facturas <span class="text-blue-600">(1ª cara)</span></h2>
+    <p class="text-sm text-slate-600 mt-1">Sube tus expedientes (factura en la hoja 1 + sustentos). Se conserva <b>solo la primera página</b> de cada PDF, copiada tal cual (sin recomprimir), y opcionalmente se leen los datos contables.</p>
+  </div>
+
+  <!-- Paso 1 -->
+  <div class="card p-5 space-y-4">
+    <h3 class="font-bold text-sm flex items-center gap-2"><span class="step">1</span> Carga tus PDFs</h3>
+    <div id="dzFact" class="dz" tabindex="0" role="button" aria-label="Seleccionar o arrastrar PDFs">
+      <div class="mx-auto w-12 h-12 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mb-2">
+        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
+      </div>
+      <p class="text-sm font-bold text-slate-700">Arrastra aquí tus PDFs (o una carpeta completa)</p>
+      <p class="text-xs text-slate-500 mt-1">o haz clic para elegirlos · puedes cargar cientos a la vez</p>
+      <div class="mt-3 flex justify-center gap-2" data-stop>
+        <button type="button" class="btn btn-ghost btn-sm" id="btnPickFact">📄 Elegir archivos</button>
+        <button type="button" class="btn btn-ghost btn-sm" id="btnPickFolderFact">📂 Elegir carpeta</button>
+      </div>
+      <input type="file" id="inFact" multiple accept="application/pdf,.pdf" class="is-hidden">
+      <input type="file" id="inFactFolder" webkitdirectory multiple class="is-hidden">
     </div>
 
-    <div class="p-6 sm:p-8 space-y-6">
-      <!-- Selector de Modo / Opciones -->
-      <div>
-        <label class="block text-sm font-semibold text-slate-700 mb-2">Selecciona el modo de unión:</label>
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <label class="relative flex items-center p-4 border rounded-xl cursor-pointer hover:border-blue-500 transition-colors has-[:checked]:border-blue-600 has-[:checked]:bg-blue-50/50">
-            <input type="radio" name="mergeMode" value="all" class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300" checked>
-            <div class="ml-3">
-              <span class="block text-sm font-bold text-slate-800">1. Unir PDFs completos</span>
-              <span class="block text-xs text-slate-500">Une todos los archivos con todas sus hojas en un solo PDF.</span>
-            </div>
-          </label>
+    <div id="qFactWrap" class="is-hidden space-y-2">
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <span class="text-xs font-bold text-slate-700 uppercase tracking-wide">En cola: <span id="qFactCount">0</span> · <span id="qFactPages">0</span> pág.</span>
+        <div class="flex flex-wrap items-center gap-1.5">
+          <span class="text-[11px] text-slate-500 mr-1 hidden sm:inline">Ordenar:</span>
+          <button class="btn btn-ghost btn-xs" data-sort="az">A → Z</button>
+          <button class="btn btn-ghost btn-xs" data-sort="za">Z → A</button>
+          <button class="btn btn-danger btn-xs" id="btnClearFact">Vaciar</button>
+        </div>
+      </div>
+      <p class="hint -mt-1">Arrastra las filas por el asa <b>⋮⋮</b> para cambiar el orden. Pulsa <b>👁</b> para ver la 1ª hoja antes de procesar.</p>
+      <div id="qFactList" class="max-h-72 overflow-y-auto custom-scroll space-y-1.5 pr-1"></div>
+    </div>
+  </div>
 
-          <label class="relative flex items-center p-4 border rounded-xl cursor-pointer hover:border-blue-500 transition-colors has-[:checked]:border-blue-600 has-[:checked]:bg-blue-50/50">
-            <input type="radio" name="mergeMode" value="first_only" class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300">
-            <div class="ml-3">
-              <span class="block text-sm font-bold text-slate-800">2. Solo la 1ª página (Facturas)</span>
-              <span class="block text-xs text-slate-500">Extrae solo la primera hoja de cada archivo y únelas todas.</span>
-            </div>
-          </label>
+  <!-- Paso 2 -->
+  <div class="card p-5 space-y-4">
+    <h3 class="font-bold text-sm flex items-center gap-2"><span class="step">2</span> Opciones</h3>
+    <div class="grid gap-5 md:grid-cols-2">
+      <div class="space-y-3">
+        <p class="text-xs font-bold text-slate-500 uppercase tracking-wide">Nombres de salida</p>
+        <div>
+          <label class="lbl" for="nameMode">Nombre de cada PDF individual</label>
+          <select id="nameMode" class="field">
+            <option value="original">Nombre original (recomendado)</option>
+            <option value="serie">Serie-Número (ej. E001-123)</option>
+            <option value="ruc_serie">RUC_Serie-Número</option>
+            <option value="custom">Personalizado…</option>
+          </select>
+          <div id="namePatternWrap" class="is-hidden mt-2">
+            <input id="namePattern" class="field" value="{fecha}_{ruc}_{serie}" placeholder="{fecha}_{ruc}_{serie}">
+            <p class="hint">Variables: <code>{nombre}</code> <code>{ruc}</code> <code>{serie}</code> <code>{fecha}</code> <code>{total}</code>. Si un dato no se detecta, se usa el nombre original.</p>
+          </div>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div><label class="lbl" for="filePrefix">Prefijo (opcional)</label><input id="filePrefix" class="field" placeholder="Ej: FAC_"></div>
+          <div><label class="lbl" for="fileSuffix">Sufijo (opcional)</label><input id="fileSuffix" class="field" placeholder="Ej: _p1"></div>
+        </div>
+        <div>
+          <label class="lbl" for="mergedName">Nombre del PDF consolidado</label>
+          <input id="mergedName" class="field" value="Facturas_Unificadas.pdf">
         </div>
       </div>
 
-      <!-- Zona de Carga (Drag & Drop) -->
-      <div>
-        <div id="dropZone" class="border-2 border-dashed border-slate-300 hover:border-blue-500 rounded-xl p-8 text-center cursor-pointer transition-all bg-slate-50 hover:bg-slate-100/70">
-          <svg class="mx-auto h-12 w-12 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path>
-          </svg>
-          <p class="mt-3 text-sm font-semibold text-slate-700">Haz clic para seleccionar tus archivos PDF o arrástralos aquí</p>
-          <p class="text-xs text-slate-400 mt-1">Puedes seleccionar múltiples archivos a la vez</p>
-          <input type="file" id="fileInput" multiple accept="application/pdf" class="hidden">
+      <div class="space-y-3">
+        <p class="text-xs font-bold text-slate-500 uppercase tracking-wide">Lectura de datos contables (solo página 1)</p>
+        <label class="chk"><input type="checkbox" id="optExtract"><span><b>Extraer datos de la factura</b><small>RUC, razón social, serie-número, fecha, moneda, subtotal, IGV y total. Genera una tabla editable y el Excel.</small></span></label>
+        <div id="extractSub" class="pl-6 space-y-2.5 border-l-2 border-slate-100 ml-2">
+          <label class="chk"><input type="checkbox" id="optOcr"><span><b>Activar OCR</b> (facturas escaneadas / imagen)<small>Se usa automáticamente cuando la página no tiene texto digital. Descarga ~10 MB la primera vez.</small></span></label>
+          <label class="chk"><input type="checkbox" id="optForceOcr"><span>Forzar OCR siempre<small>Solo si el texto digital sale corrupto.</small></span></label>
+          <label class="chk"><input type="checkbox" id="optAi"><span><b>Mejorar con IA Gemini</b> <span id="optAiState" class="badge b-gray">sin clave</span><small>Lee la imagen de la página 1 y corrige al motor local. Requiere clave gratuita (botón ✨ arriba).</small></span></label>
         </div>
-      </div>
-
-      <!-- Lista de Archivos Seleccionados -->
-      <div id="fileListContainer" class="hidden">
-        <div class="flex items-center justify-between mb-2">
-          <h2 class="text-sm font-semibold text-slate-700">Archivos seleccionados (<span id="fileCount">0</span>)</h2>
-          <button id="clearBtn" class="text-xs text-red-600 hover:text-red-700 font-medium">Limpiar lista</button>
-        </div>
-        <ul id="fileList" class="divide-y divide-slate-100 max-h-56 overflow-y-auto border border-slate-200 rounded-lg p-2 bg-slate-50 text-xs text-slate-600">
-        </ul>
-      </div>
-
-      <!-- Barra de Progreso y Estado -->
-      <div id="statusContainer" class="hidden space-y-2">
-        <div class="w-full bg-slate-200 rounded-full h-2.5 overflow-hidden">
-          <div id="progressBar" class="bg-blue-600 h-2.5 rounded-full transition-all duration-300" style="width: 0%"></div>
-        </div>
-        <p id="statusText" class="text-center text-xs font-medium text-slate-600">Procesando...</p>
-      </div>
-
-      <!-- Botón de Acción -->
-      <div>
-        <button id="processBtn" disabled class="w-full py-3.5 px-4 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white font-bold rounded-xl shadow transition duration-150 ease-in-out flex items-center justify-center space-x-2 text-sm sm:text-base">
-          <span>Procesar y Descargar PDF</span>
-        </button>
-      </div>
-
-      <!-- Nota de Privacidad -->
-      <div class="text-center text-xs text-slate-400 pt-2 border-t border-slate-100">
-        🔒 Tus documentos nunca salen de tu dispositivo ni se envían a ningún servidor en la nube.
       </div>
     </div>
   </div>
 
-  <script>
-    const fileInput = document.getElementById('fileInput');
-    const dropZone = document.getElementById('dropZone');
-    const fileListContainer = document.getElementById('fileListContainer');
-    const fileList = document.getElementById('fileList');
-    const fileCount = document.getElementById('fileCount');
-    const clearBtn = document.getElementById('clearBtn');
-    const processBtn = document.getElementById('processBtn');
-    const statusContainer = document.getElementById('statusContainer');
-    const progressBar = document.getElementById('progressBar');
-    const statusText = document.getElementById('statusText');
+  <!-- Paso 3 -->
+  <div class="card p-5 space-y-4">
+    <h3 class="font-bold text-sm flex items-center gap-2"><span class="step">3</span> Procesa</h3>
+    <button id="btnProcess" class="btn btn-primary w-full !py-3.5 !text-sm" disabled>⚡ Extraer 1ª página</button>
+    <div id="progFact" class="is-hidden bg-slate-50 p-4 rounded-xl border border-slate-200"></div>
+  </div>
 
-    let selectedFiles = [];
+  <!-- Paso 4 -->
+  <div id="resFact" class="card p-5 space-y-5 is-hidden">
+    <div class="flex flex-wrap items-start justify-between gap-3">
+      <div>
+        <h3 class="font-bold text-sm flex items-center gap-2"><span class="step">4</span> <span id="resTitle">Resultados</span></h3>
+        <p class="text-xs text-slate-500 mt-1" id="resSub"></p>
+      </div>
+      <div id="resStats" class="flex flex-wrap gap-2 text-xs"></div>
+    </div>
 
-    dropZone.addEventListener('click', () => fileInput.click());
+    <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <button id="btnDlZip" class="btn btn-ok">📁 ZIP · PDFs individuales</button>
+      <button id="btnDlMerged" class="btn btn-indigo">📄 1 PDF consolidado</button>
+      <button id="btnDlExcel" class="btn btn-teal is-hidden">📊 Excel (.xlsx)</button>
+      <button id="btnCopy" class="btn btn-ghost is-hidden">📋 Copiar tabla</button>
+    </div>
+    <div id="dlProg" class="is-hidden"></div>
 
-    dropZone.addEventListener('dragover', (e) => {
-      e.preventDefault();
-      dropZone.classList.add('border-blue-500', 'bg-blue-50/50');
-    });
+    <div id="errBox" class="is-hidden bg-red-50 border border-red-200 rounded-xl p-3 text-xs text-red-800"></div>
 
-    dropZone.addEventListener('dragleave', () => {
-      dropZone.classList.remove('border-blue-500', 'bg-blue-50/50');
-    });
+    <div id="dataWrap" class="is-hidden space-y-2">
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <h4 class="text-xs font-bold text-slate-700 uppercase tracking-wide">Datos detectados en la 1ª página <span class="font-normal normal-case text-slate-400">· puedes corregir cualquier celda antes de exportar</span></h4>
+        <input id="dataFilter" class="field !w-56" placeholder="🔎 Filtrar (archivo, RUC, serie…)">
+      </div>
+      <div class="overflow-auto max-h-[28rem] custom-scroll border border-slate-200 rounded-xl">
+        <table class="dt">
+          <thead><tr>
+            <th class="sticky-c">N°</th><th>Archivo</th><th>Tipo</th><th>RUC emisor</th><th>Razón social</th><th>Serie-Número</th><th>Fecha</th><th>Mon.</th><th>Subtotal</th><th>IGV</th><th>Total</th><th>Avisos</th><th>Método</th><th></th>
+          </tr></thead>
+          <tbody id="dataBody"></tbody>
+        </table>
+      </div>
+      <div id="totalsLine" class="text-xs font-semibold text-slate-700"></div>
+      <p class="hint">🟥 fila roja = dato inválido (p. ej. RUC con dígito verificador incorrecto) · 🟨 amarilla = dato faltante o dudoso. Revisa esas filas con 👁.</p>
+    </div>
+  </div>
+</section>
 
-    dropZone.addEventListener('drop', (e) => {
-      e.preventDefault();
-      dropZone.classList.remove('border-blue-500', 'bg-blue-50/50');
-      if (e.dataTransfer.files.length > 0) {
-        handleFiles(e.dataTransfer.files);
+<!-- ======================================================
+     PESTAÑA 2 · UNIR
+     ====================================================== -->
+<section id="pane-unir" class="space-y-5 is-hidden" role="tabpanel">
+  <div class="card p-5">
+    <h2 class="text-lg font-bold">Unir PDFs completos</h2>
+    <p class="text-sm text-slate-600 mt-1">Combina varios PDFs con <b>todas sus páginas</b> en un único archivo. Arrastra para ordenar.</p>
+  </div>
+  <div class="card p-5 space-y-4">
+    <div id="dzUnir" class="dz" tabindex="0" role="button" aria-label="Seleccionar o arrastrar PDFs">
+      <p class="text-sm font-bold text-slate-700">Arrastra aquí los PDFs que deseas unir</p>
+      <p class="text-xs text-slate-500 mt-1">o haz clic para elegirlos</p>
+      <input type="file" id="inUnir" multiple accept="application/pdf,.pdf" class="is-hidden">
+    </div>
+    <div id="qUnirWrap" class="is-hidden space-y-2">
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <span class="text-xs font-bold text-slate-700 uppercase tracking-wide">A unir: <span id="qUnirCount">0</span> archivos · <span id="qUnirPages">0</span> páginas</span>
+        <div class="flex items-center gap-1.5">
+          <button class="btn btn-ghost btn-xs" data-sort="az">A → Z</button>
+          <button class="btn btn-ghost btn-xs" data-sort="za">Z → A</button>
+          <button class="btn btn-danger btn-xs" id="btnClearUnir">Vaciar</button>
+        </div>
+      </div>
+      <div id="qUnirList" class="max-h-80 overflow-y-auto custom-scroll space-y-1.5 pr-1"></div>
+    </div>
+    <div class="grid gap-3 sm:grid-cols-[1fr_auto] items-end">
+      <div><label class="lbl" for="unirName">Nombre del archivo final</label><input id="unirName" class="field" value="Documentos_Unidos.pdf"></div>
+      <button id="btnUnir" class="btn btn-primary !py-3" disabled>📚 Unir y descargar</button>
+    </div>
+    <div id="progUnir" class="is-hidden bg-slate-50 p-4 rounded-xl border border-slate-200"></div>
+    <div id="unirDone" class="is-hidden flex flex-wrap items-center justify-between gap-2 bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-xs text-emerald-900">
+      <span id="unirDoneText"></span><button id="btnUnirAgain" class="btn btn-ok btn-sm">⬇ Descargar de nuevo</button>
+    </div>
+  </div>
+</section>
+
+<!-- ======================================================
+     PESTAÑA 3 · DIVIDIR
+     ====================================================== -->
+<section id="pane-dividir" class="space-y-5 is-hidden" role="tabpanel">
+  <div class="card p-5">
+    <h2 class="text-lg font-bold">Dividir / extraer páginas</h2>
+    <p class="text-sm text-slate-600 mt-1">Carga un PDF, marca las páginas en las miniaturas o escribe un rango (<code>1, 3-5, 8-</code>) y elige qué hacer.</p>
+  </div>
+
+  <div class="card p-5 space-y-4">
+    <div id="dzSplit" class="dz" tabindex="0" role="button" aria-label="Seleccionar o arrastrar un PDF">
+      <p id="splitName" class="text-sm font-bold text-slate-700">Arrastra aquí un PDF o haz clic para elegirlo</p>
+      <p id="splitInfo" class="text-xs text-blue-600 font-semibold mt-1"></p>
+      <input type="file" id="inSplit" accept="application/pdf,.pdf" class="is-hidden">
+    </div>
+
+    <div id="splitTools" class="is-hidden space-y-4">
+      <div class="grid gap-3 md:grid-cols-[1fr_auto] items-end">
+        <div>
+          <label class="lbl" for="rangeInput">Páginas a usar <span class="font-normal text-slate-400">(se sincroniza con las miniaturas)</span></label>
+          <input id="rangeInput" class="field" placeholder="Ej: 1, 3-5, 8-   ·   también: todas, impares, pares" autocomplete="off">
+          <p id="rangeMsg" class="hint"></p>
+        </div>
+        <div class="flex flex-wrap gap-1.5">
+          <button class="btn btn-ghost btn-xs" data-sel="all">Todas</button>
+          <button class="btn btn-ghost btn-xs" data-sel="none">Ninguna</button>
+          <button class="btn btn-ghost btn-xs" data-sel="odd">Impares</button>
+          <button class="btn btn-ghost btn-xs" data-sel="even">Pares</button>
+          <button class="btn btn-ghost btn-xs" data-sel="inv">Invertir</button>
+        </div>
+      </div>
+
+      <div class="text-xs font-semibold text-slate-700">Seleccionadas: <span id="selCount">0</span> de <span id="selTotal">0</span></div>
+
+      <div id="pgGrid" class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 xl:grid-cols-7 gap-2 max-h-[26rem] overflow-y-auto custom-scroll p-1 border border-slate-200 rounded-xl bg-slate-50"></div>
+      <p class="hint -mt-2">Clic = marcar/desmarcar · Mayús+clic = rango · 🔍 = ampliar la página</p>
+
+      <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+        <div class="p-4 border border-slate-200 rounded-xl bg-slate-50 space-y-2">
+          <h4 class="text-xs font-bold text-slate-700">A · Extraer las páginas marcadas</h4>
+          <button id="btnExtractOne" class="btn btn-primary w-full">📄 En 1 solo PDF</button>
+          <button id="btnExtractSep" class="btn btn-ghost w-full">🗜 Cada una en su PDF (.zip)</button>
+        </div>
+        <div class="p-4 border border-slate-200 rounded-xl bg-slate-50 space-y-2">
+          <h4 class="text-xs font-bold text-slate-700">B · Separar todo el documento</h4>
+          <button id="btnSplitAll" class="btn btn-indigo w-full">📦 Todas las hojas en .zip</button>
+          <div class="flex gap-2 items-center">
+            <span class="text-xs text-slate-600 whitespace-nowrap">o cada</span>
+            <input id="chunkN" type="number" min="1" value="2" class="field !w-20 text-center">
+            <button id="btnSplitN" class="btn btn-ghost flex-1 !px-2">págs. (.zip)</button>
+          </div>
+        </div>
+        <div class="p-4 border border-slate-200 rounded-xl bg-slate-50 space-y-2">
+          <h4 class="text-xs font-bold text-slate-700">C · Eliminar páginas</h4>
+          <p class="text-[11px] text-slate-500">Descarga el PDF original <b>sin</b> las páginas marcadas.</p>
+          <button id="btnDelete" class="btn btn-danger w-full">🗑 Quitar marcadas y descargar</button>
+        </div>
+      </div>
+      <div id="progSplit" class="is-hidden bg-slate-50 p-4 rounded-xl border border-slate-200"></div>
+    </div>
+  </div>
+</section>
+
+  </main>
+</div>
+
+<!-- ============ MODAL VISTA PREVIA ============ -->
+<dialog id="dlgPreview" style="width:min(920px,calc(100vw - 1.5rem))">
+  <div class="flex flex-wrap items-center justify-between gap-2 px-4 py-3 border-b border-slate-200">
+    <h3 id="pvTitle" class="text-xs font-bold text-slate-700 truncate min-w-0 flex-1"></h3>
+    <div class="flex items-center gap-1.5">
+      <button class="btn btn-ghost btn-xs" id="pvPrev" aria-label="Página anterior">◀</button>
+      <span id="pvPage" class="text-xs font-semibold text-slate-600 w-20 text-center"></span>
+      <button class="btn btn-ghost btn-xs" id="pvNext" aria-label="Página siguiente">▶</button>
+      <span class="w-2"></span>
+      <button class="btn btn-ghost btn-xs" id="pvZoomOut" aria-label="Alejar">−</button>
+      <button class="btn btn-ghost btn-xs" id="pvZoomIn" aria-label="Acercar">+</button>
+      <button class="btn btn-primary btn-xs" id="pvClose">Cerrar</button>
+    </div>
+  </div>
+  <div id="pvBody" class="overflow-auto custom-scroll bg-slate-200 p-3 text-center" style="max-height:calc(100vh - 7rem)">
+    <canvas id="pvCanvas" class="inline-block shadow-lg bg-white"></canvas>
+  </div>
+</dialog>
+
+<!-- ============ MODAL IA ============ -->
+<dialog id="dlgAi" style="width:min(520px,calc(100vw - 1.5rem))">
+  <div class="p-6 space-y-4">
+    <div class="flex items-center justify-between">
+      <h3 class="text-base font-bold">✨ IA Gemini para facturas</h3>
+      <button class="btn btn-ghost btn-xs" id="aiClose" aria-label="Cerrar">✕</button>
+    </div>
+    <p class="text-xs text-slate-600 leading-relaxed">
+      Por defecto la app usa un <b>motor local gratuito</b> (patrones contables + validación de RUC). Si activas Gemini, la IA lee la <b>imagen de la página 1</b> y se combina con el motor local: si discrepan, se prioriza el RUC con dígito verificador válido y se te avisa de las diferencias.
+    </p>
+    <div class="bg-amber-50 border border-amber-200 text-amber-900 rounded-lg p-3 text-[11px] leading-relaxed">
+      <b>Privacidad:</b> con la IA activada, la 1ª página de cada factura se envía a Google. Sin ella, nada sale de tu equipo.
+      Obtén una clave gratis en <a class="underline font-semibold" href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer">Google AI Studio</a>. La clave se guarda solo en este navegador.
+    </div>
+    <div>
+      <label class="lbl" for="aiKey">Gemini API Key</label>
+      <div class="flex gap-2">
+        <input id="aiKey" type="password" class="field" placeholder="AIzaSy…" autocomplete="off" spellcheck="false">
+        <button type="button" class="btn btn-ghost btn-sm" id="aiShow" aria-label="Mostrar u ocultar clave">👁</button>
+      </div>
+    </div>
+    <div class="grid sm:grid-cols-2 gap-3">
+      <div>
+        <label class="lbl" for="aiModel">Modelo</label>
+        <input id="aiModel" class="field" list="aiModels" value="gemini-2.5-flash" spellcheck="false">
+        <datalist id="aiModels"><option value="gemini-2.5-flash"><option value="gemini-2.5-flash-lite"><option value="gemini-2.5-pro"></datalist>
+      </div>
+      <label class="chk sm:mt-6"><input type="checkbox" id="aiImage" checked><span>Enviar la imagen de la página<small>Más preciso y necesario para escaneos.</small></span></label>
+    </div>
+    <p id="aiTestMsg" class="text-xs min-h-[1rem]"></p>
+    <div class="flex flex-wrap justify-between gap-2 pt-1">
+      <button class="btn btn-danger btn-sm" id="aiDelete">Borrar clave</button>
+      <div class="flex gap-2">
+        <button class="btn btn-ghost btn-sm" id="aiTest">Probar conexión</button>
+        <button class="btn btn-primary btn-sm" id="aiSave">Guardar</button>
+      </div>
+    </div>
+  </div>
+</dialog>
+
+<div id="toasts" aria-live="polite"></div>
+
+<script>
+'use strict';
+/* =====================================================================
+   FacturaPro Suite — todo el procesamiento ocurre en el navegador
+   ===================================================================== */
+
+// ---------- Utilidades generales ----------
+const $  = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const tick  = () => new Promise(r => setTimeout(r, 0));          // cede el hilo para repintar la UI
+const show  = (el, on = true) => el.classList.toggle('is-hidden', !on);
+const pad   = (n, w = 2) => String(n).padStart(w, '0');
+const natCmp = (a, b) => a.localeCompare(b, 'es', { numeric: true, sensitivity: 'base' });
+const fmtBytes = b => b < 1024 ? b + ' B' : b < 1048576 ? (b / 1024).toFixed(0) + ' KB' : (b / 1048576).toFixed(2) + ' MB';
+const fmtMoney = n => (n == null || n === '' || isNaN(n)) ? '' : Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const SYM = { PEN: 'S/', USD: 'US$', EUR: '€' };
+const isPdf = f => f.type === 'application/pdf' || /\.pdf$/i.test(f.name);
+
+const store = {
+  get(k, d) { try { const v = localStorage.getItem('fps:' + k); return v === null ? d : JSON.parse(v); } catch { return d; } },
+  set(k, v) { try { localStorage.setItem('fps:' + k, JSON.stringify(v)); } catch {} },
+};
+const KEY_STORE = 'gemini_invoice_api_key';
+const getKey  = () => { try { return localStorage.getItem(KEY_STORE) || ''; } catch { return ''; } };
+const setKey  = v => { try { v ? localStorage.setItem(KEY_STORE, v) : localStorage.removeItem(KEY_STORE); } catch {} };
+
+function toast(msg, type = 'info', ms = 4500) {
+  const el = document.createElement('div');
+  el.className = 'toast t-' + type; el.textContent = msg;
+  $('#toasts').appendChild(el);
+  setTimeout(() => el.remove(), ms);
+}
+
+function download(blob, name) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 30000);
+}
+
+function sanitizeName(s) {
+  return String(s).replace(/[\\/:*?"<>|\u0000-\u001f]/g, '-').replace(/\s+/g, ' ').replace(/^[.\s]+|[\s.]+$/g, '').slice(0, 180);
+}
+function ensurePdfExt(n, fallback) { n = sanitizeName(n || '') || fallback; return /\.pdf$/i.test(n) ? n : n + '.pdf'; }
+function uniqueName(name, used) {                                      // evita que un duplicado pise a otro dentro del ZIP
+  let n = name, i = 2;
+  const dot = name.lastIndexOf('.'), base = dot > 0 ? name.slice(0, dot) : name, ext = dot > 0 ? name.slice(dot) : '';
+  while (used.has(n.toLowerCase())) n = `${base} (${i++})${ext}`;
+  used.add(n.toLowerCase()); return n;
+}
+
+// ---------- Barra de progreso reutilizable ----------
+function Progress(root, { cancellable = false } = {}) {
+  root.innerHTML = `
+    <div class="flex items-center justify-between gap-3 text-xs font-semibold text-slate-700">
+      <span data-text class="truncate">Preparando…</span>
+      <span class="shrink-0"><span data-time class="text-slate-400 font-normal mr-2"></span><span data-pct>0%</span></span>
+    </div>
+    <div class="h-2.5 bg-slate-200 rounded-full overflow-hidden mt-2"><div data-bar class="h-full bg-blue-600 rounded-full transition-all duration-200" style="width:0%"></div></div>
+    ${cancellable ? '<div class="mt-3 text-right"><button type="button" data-cancel class="btn btn-ghost btn-sm">✋ Cancelar</button></div>' : ''}`;
+  const q = s => root.querySelector(s);
+  let t0 = 0, cancelled = false;
+  if (cancellable) q('[data-cancel]').addEventListener('click', () => { cancelled = true; q('[data-cancel]').disabled = true; q('[data-text]').textContent = 'Cancelando…'; });
+  return {
+    start(msg = 'Preparando…') { t0 = Date.now(); cancelled = false; if (cancellable) q('[data-cancel]').disabled = false; show(root, true); this.set(0, msg); },
+    set(p, msg) {
+      p = Math.max(0, Math.min(100, Math.round(p)));
+      q('[data-bar]').style.width = p + '%'; q('[data-pct]').textContent = p + '%';
+      if (msg) q('[data-text]').textContent = msg;
+      const s = Math.round((Date.now() - t0) / 1000); q('[data-time]').textContent = pad(Math.floor(s / 60)) + ':' + pad(s % 60);
+    },
+    text(msg) { q('[data-text]').textContent = msg; },
+    hide() { show(root, false); },
+    get cancelled() { return cancelled; },
+  };
+}
+
+// ---------- Comprobación de librerías ----------
+(function checkLibs() {
+  const libs = { 'pdf-lib': window.PDFLib, 'JSZip': window.JSZip, 'pdf.js': window.pdfjsLib, 'SheetJS (Excel)': window.XLSX };
+  const missing = Object.entries(libs).filter(([, v]) => !v).map(([k]) => k);
+  if (missing.length) {
+    const b = $('#libBanner'); show(b, true);
+    b.firstElementChild.innerHTML = `⚠️ No se pudieron cargar: <b>${esc(missing.join(', '))}</b>. Comprueba tu conexión a internet (las librerías se descargan de una CDN la primera vez) y recarga la página.`;
+  }
+})();
+
+// ---------- Utilidades PDF ----------
+const loadLib = buf => PDFLib.PDFDocument.load(buf, { ignoreEncryption: true, updateMetadata: false });
+async function openPdfJs(src) {                                         // src: File | ArrayBuffer
+  const buf = src instanceof Blob ? await src.arrayBuffer() : src;
+  return pdfjsLib.getDocument({ data: new Uint8Array(buf) }).promise;
+}
+async function renderPage(page, { width, maxSide } = {}) {
+  const base = page.getViewport({ scale: 1 });
+  const scale = width ? width / base.width : Math.min(3, maxSide / Math.max(base.width, base.height));
+  const vp = page.getViewport({ scale });
+  const c = document.createElement('canvas'); c.width = Math.ceil(vp.width); c.height = Math.ceil(vp.height);
+  const ctx = c.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
+  await page.render({ canvasContext: ctx, viewport: vp }).promise;
+  return c;
+}
+async function subsetDoc(src, idx) {                                    // copia páginas tal cual (sin recomprimir)
+  const out = await PDFLib.PDFDocument.create();
+  const pages = await out.copyPages(src, idx);
+  pages.forEach(p => out.addPage(p));
+  return out;
+}
+const pdfBlob = bytes => new Blob([bytes], { type: 'application/pdf' });
+
+/* Texto de la página agrupado en líneas por posición (mucho más fiable que unir con espacios) */
+async function pageTextLines(page) {
+  const tc = await page.getTextContent();
+  const its = tc.items.filter(i => typeof i.str === 'string' && i.str.trim() !== '')
+    .map(i => ({ s: i.str, x: i.transform[4], y: i.transform[5], h: Math.abs(i.height) || Math.abs(i.transform[3]) || 8, w: i.width || 0 }));
+  its.sort((a, b) => b.y - a.y);
+  const rows = [];
+  for (const it of its) {
+    const last = rows[rows.length - 1];
+    if (last && Math.abs(last.y - it.y) <= Math.max(2, it.h * 0.45)) last.items.push(it); else rows.push({ y: it.y, items: [it] });
+  }
+  const lines = rows.map(r => {
+    r.items.sort((a, b) => a.x - b.x);
+    let out = '', end = null;
+    for (const it of r.items) {
+      if (end !== null) {
+        const gap = it.x - end;
+        if (gap > it.h * 0.15 && !/\s$/.test(out) && !/^\s/.test(it.s)) out += gap > it.h * 2.5 ? '   ' : ' ';
       }
-    });
-
-    fileInput.addEventListener('change', (e) => {
-      if (e.target.files.length > 0) {
-        handleFiles(e.target.files);
-      }
-    });
-
-    function handleFiles(files) {
-      for (const file of files) {
-        if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
-          selectedFiles.push(file);
-        }
-      }
-      updateUI();
+      out += it.s; end = it.x + it.w;
     }
+    return out.replace(/\s+$/, '').trim();
+  }).filter(Boolean);
+  return lines;
+}
 
-    function updateUI() {
-      if (selectedFiles.length > 0) {
-        fileListContainer.classList.remove('hidden');
-        processBtn.disabled = false;
-        fileCount.innerText = selectedFiles.length;
-        fileList.innerHTML = '';
-        selectedFiles.forEach((f, idx) => {
-          const li = document.createElement('li');
-          li.className = 'py-1.5 px-2 flex justify-between items-center';
-          li.innerHTML = `
-            <span class="truncate font-medium text-slate-700">${idx + 1}. ${f.name}</span>
-            <span class="text-slate-400 whitespace-nowrap ml-2">${(f.size / (1024 * 1024)).toFixed(2)} MB</span>
-          `;
-          fileList.appendChild(li);
-        });
-      } else {
-        fileListContainer.classList.add('hidden');
-        processBtn.disabled = true;
-        fileCount.innerText = '0';
-        fileList.innerHTML = '';
-      }
-    }
-
-    clearBtn.addEventListener('click', () => {
-      selectedFiles = [];
-      fileInput.value = '';
-      updateUI();
+// ---------- Cola de archivos (reutilizada en pestañas 1 y 2) ----------
+let UID = 0;
+class FileQueue {
+  constructor({ listEl, wrapEl, countEl, pagesEl, previewLabel = 'Ver', sortBatch = false, onChange = () => {}, onPreview }) {
+    Object.assign(this, { listEl, wrapEl, countEl, pagesEl, previewLabel, sortBatch, onChange, onPreview });
+    this.items = []; this._raf = 0; this._meta = false; this._drag = null;
+    listEl.addEventListener('click', e => {
+      const b = e.target.closest('[data-act]'); if (!b) return;
+      const id = +b.closest('[data-id]').dataset.id, i = this.items.findIndex(x => x.id === id);
+      if (b.dataset.act === 'remove') this.remove(id);
+      else if (b.dataset.act === 'up' && i > 0) this.move(i, i - 1);
+      else if (b.dataset.act === 'down' && i < this.items.length - 1) this.move(i, i + 1);
+      else if (b.dataset.act === 'preview') this.onPreview(this.items[i], 1);
     });
+    listEl.addEventListener('dragstart', e => { const r = e.target.closest('.qrow'); if (!r) return; this._drag = +r.dataset.id; r.classList.add('dragging'); e.dataTransfer.effectAllowed = 'move'; try { e.dataTransfer.setData('text/plain', 'row'); } catch {} });
+    listEl.addEventListener('dragend', () => { this._drag = null; this._clearMarks(); });
+    listEl.addEventListener('dragover', e => { if (this._drag == null) return; e.preventDefault(); this._clearMarks(); const r = e.target.closest('.qrow'); if (r) r.classList.add('dropbefore'); });
+    listEl.addEventListener('drop', e => {
+      if (this._drag == null) return; e.preventDefault();
+      const r = e.target.closest('.qrow'); const from = this.items.findIndex(x => x.id === this._drag);
+      let to = r ? this.items.findIndex(x => x.id === +r.dataset.id) : this.items.length;
+      this._drag = null; this._clearMarks(); if (from < 0 || from === to) return;
+      const [it] = this.items.splice(from, 1); if (from < to) to--; this.items.splice(to, 0, it); this.render();
+    });
+  }
+  _clearMarks() { this.listEl.querySelectorAll('.dropbefore,.dragging').forEach(n => n.classList.remove('dropbefore', 'dragging')); }
+  add(files) {
+    let added = 0, dup = 0, skipped = 0;
+    files = [...files]; if (this.sortBatch) files.sort((a, b) => natCmp(a.name, b.name));
+    for (const f of files) {
+      if (!isPdf(f)) { skipped++; continue; }
+      const key = `${f.name}|${f.size}|${f.lastModified}`;
+      if (this.items.some(i => i.key === key)) { dup++; continue; }
+      this.items.push({ id: ++UID, key, file: f, pages: null, thumb: null, status: 'idle', error: '' }); added++;
+    }
+    const parts = [];
+    if (added) parts.push(`${added} PDF agregado${added > 1 ? 's' : ''}`);
+    if (dup) parts.push(`${dup} repetido${dup > 1 ? 's' : ''} omitido${dup > 1 ? 's' : ''}`);
+    if (skipped) parts.push(`${skipped} no son PDF`);
+    if (parts.length) toast(parts.join(' · '), added ? 'ok' : 'warn');
+    this.render(); this.loadMeta();
+  }
+  remove(id) { this.items = this.items.filter(i => i.id !== id); this.render(); }
+  clear() { this.items = []; this.render(); }
+  move(a, b) { const [it] = this.items.splice(a, 1); this.items.splice(b, 0, it); this.render(); }
+  sort(dir) { this.items.sort((a, b) => dir === 'az' ? natCmp(a.file.name, b.file.name) : natCmp(b.file.name, a.file.name)); this.render(); }
+  renderSoon() { if (!this._raf) this._raf = requestAnimationFrame(() => { this._raf = 0; this.render(); }); }
+  badge(it) {
+    if (it.status === 'working') return '<span class="badge b-blue"><span class="spin"></span> Procesando</span>';
+    if (it.status === 'ok')      return '<span class="badge b-ok">✔ Listo</span>';
+    if (it.status === 'error')   return `<span class="badge b-bad" title="${esc(it.error)}">✖ Error</span>`;
+    if (it.status === 'cancel')  return '<span class="badge b-gray">Omitido</span>';
+    if (it.pages === '?')        return `<span class="badge b-warn" title="${esc(it.error)}">⚠ ilegible</span>`;
+    return '';
+  }
+  render() {
+    const n = this.items.length;
+    this.countEl.textContent = n;
+    if (this.pagesEl) this.pagesEl.textContent = this.items.reduce((s, i) => s + (typeof i.pages === 'number' ? i.pages : 0), 0);
+    show(this.wrapEl, n > 0);
+    this.listEl.innerHTML = this.items.map((it, i) => `
+      <div class="qrow" draggable="true" data-id="${it.id}">
+        <span class="grip" title="Arrastra para reordenar" aria-hidden="true">⋮⋮</span>
+        <span class="text-[11px] font-bold text-slate-400 w-6 text-right tabular-nums">${i + 1}</span>
+        ${it.thumb ? `<img class="thumb" alt="" src="${it.thumb}">` : '<span class="thumb"></span>'}
+        <div class="min-w-0 flex-1">
+          <div class="text-xs font-semibold text-slate-800 truncate" title="${esc(it.file.name)}">${esc(it.file.name)}</div>
+          <div class="text-[11px] text-slate-500">${fmtBytes(it.file.size)} · ${it.pages == null ? 'leyendo…' : it.pages === '?' ? 'no se pudo leer' : it.pages + ' pág.'}</div>
+        </div>
+        ${this.badge(it)}
+        <div class="flex items-center gap-1 shrink-0">
+          <button class="btn btn-ghost btn-xs" data-act="preview" title="Vista previa">👁<span class="hidden sm:inline"> ${esc(this.previewLabel)}</span></button>
+          <button class="btn btn-ghost btn-xs hidden sm:inline-flex" data-act="up" title="Subir" aria-label="Subir">▲</button>
+          <button class="btn btn-ghost btn-xs hidden sm:inline-flex" data-act="down" title="Bajar" aria-label="Bajar">▼</button>
+          <button class="btn btn-danger btn-xs" data-act="remove" title="Quitar" aria-label="Quitar">✕</button>
+        </div>
+      </div>`).join('');
+    this.onChange(this);
+  }
+  async loadMeta() {                                                   // nº de páginas + miniatura, uno a uno
+    if (this._meta) return; this._meta = true;
+    try {
+      for (;;) {
+        const it = this.items.find(i => i.pages == null); if (!it) break;
+        try {
+          const pdf = await openPdfJs(it.file);
+          it.pages = pdf.numPages;
+          try { const c = await renderPage(await pdf.getPage(1), { width: 72 }); it.thumb = c.toDataURL('image/jpeg', 0.6); } catch {}
+          pdf.destroy();
+        } catch (e) { it.pages = '?'; it.error = /password/i.test(e?.name + e?.message) ? 'Protegido con contraseña' : 'No se pudo leer el PDF'; }
+        this.renderSoon(); await tick();
+      }
+    } finally { this._meta = false; }
+  }
+}
 
-    processBtn.addEventListener('click', async () => {
-      if (selectedFiles.length === 0) return;
+// ---------- Zona de arrastrar y soltar ----------
+async function walkEntry(en, out) {
+  if (en.isFile) out.push(await new Promise((res, rej) => en.file(res, rej)));
+  else if (en.isDirectory) {
+    const rd = en.createReader(); let batch;
+    do { batch = await new Promise((res, rej) => rd.readEntries(res, rej)); for (const c of batch) await walkEntry(c, out); } while (batch.length);
+  }
+}
+async function filesFromDrop(dt) {
+  const entries = [...(dt.items || [])].map(i => i.kind === 'file' && i.webkitGetAsEntry ? i.webkitGetAsEntry() : null);
+  if (entries.length && entries.every(Boolean)) { const out = []; for (const en of entries) await walkEntry(en, out); return out; }
+  return [...dt.files];
+}
+function bindDrop(zone, input, onFiles, extraInputs = []) {
+  const open = () => input.click();
+  zone.addEventListener('click', e => { if (e.target.closest('button,input')) return; open(); });
+  zone.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } });
+  ['dragenter', 'dragover'].forEach(ev => zone.addEventListener(ev, e => { if (e.dataTransfer?.types?.includes('Files')) { e.preventDefault(); zone.classList.add('over'); } }));
+  ['dragleave', 'drop'].forEach(ev => zone.addEventListener(ev, () => zone.classList.remove('over')));
+  zone.addEventListener('drop', async e => { e.preventDefault(); onFiles(await filesFromDrop(e.dataTransfer)); });
+  [input, ...extraInputs].forEach(inp => inp.addEventListener('change', () => { onFiles([...inp.files]); inp.value = ''; }));
+}
+// evita que el navegador abra el PDF si se suelta fuera de la zona
+['dragover', 'drop'].forEach(ev => window.addEventListener(ev, e => { if (e.dataTransfer?.types?.includes('Files')) e.preventDefault(); }));
 
-      const mode = document.querySelector('input[name="mergeMode"]:checked').value;
-      
-      processBtn.disabled = true;
-      statusContainer.classList.remove('hidden');
-      progressBar.style.width = '5%';
-      statusText.innerText = 'Inicializando motor PDF...';
+// ---------- Navegación por pestañas ----------
+function switchTab(id) {
+  $$('.tab').forEach(t => t.setAttribute('aria-selected', String(t.dataset.tab === id)));
+  ['facturas', 'unir', 'dividir'].forEach(t => show($('#pane-' + t), t === id));
+  store.set('tab', id);
+}
+$$('.tab').forEach(t => t.addEventListener('click', () => switchTab(t.dataset.tab)));
 
+// ---------- Vista previa (modal) ----------
+const pv = { pdf: null, page: 1, scale: 1, token: 0, task: null, name: '' };
+async function openPreview(file, page = 1) {
+  const dlg = $('#dlgPreview');
+  pv.name = file.name; $('#pvTitle').textContent = file.name;
+  if (!dlg.open) dlg.showModal();
+  try {
+    if (pv.pdf) { try { pv.pdf.destroy(); } catch {} }
+    pv.pdf = await openPdfJs(file); pv.page = Math.min(page, pv.pdf.numPages); pv.scale = 1;
+    await renderPreview();
+  } catch (e) { toast('No se pudo abrir la vista previa: ' + (e?.message || e), 'bad'); dlg.close(); }
+}
+async function renderPreview() {
+  if (!pv.pdf) return;
+  const token = ++pv.token;
+  const page = await pv.pdf.getPage(pv.page); if (token !== pv.token) return;
+  const body = $('#pvBody'), base = page.getViewport({ scale: 1 });
+  const fit = Math.max(200, Math.min(body.clientWidth - 24, 880)) / base.width;
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const vp = page.getViewport({ scale: fit * pv.scale * dpr });
+  const c = $('#pvCanvas');
+  c.width = Math.floor(vp.width); c.height = Math.floor(vp.height);
+  c.style.width = Math.floor(vp.width / dpr) + 'px'; c.style.height = Math.floor(vp.height / dpr) + 'px';
+  $('#pvPage').textContent = `Pág. ${pv.page} / ${pv.pdf.numPages}`;
+  $('#pvPrev').disabled = pv.page <= 1; $('#pvNext').disabled = pv.page >= pv.pdf.numPages;
+  if (pv.task) { try { pv.task.cancel(); } catch {} }
+  const ctx = c.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
+  pv.task = page.render({ canvasContext: ctx, viewport: vp });
+  try { await pv.task.promise; } catch (e) { if (e?.name !== 'RenderingCancelledException') throw e; }
+}
+const pvGo = d => { if (!pv.pdf) return; const p = pv.page + d; if (p >= 1 && p <= pv.pdf.numPages) { pv.page = p; renderPreview(); } };
+const pvZoom = f => { pv.scale = Math.max(.4, Math.min(3, pv.scale * f)); renderPreview(); };
+$('#pvPrev').onclick = () => pvGo(-1); $('#pvNext').onclick = () => pvGo(1);
+$('#pvZoomIn').onclick = () => pvZoom(1.25); $('#pvZoomOut').onclick = () => pvZoom(.8);
+$('#pvClose').onclick = () => $('#dlgPreview').close();
+$('#dlgPreview').addEventListener('close', () => { pv.token++; if (pv.pdf) { try { pv.pdf.destroy(); } catch {} pv.pdf = null; } });
+$('#dlgPreview').addEventListener('keydown', e => { if (e.key === 'ArrowRight') pvGo(1); else if (e.key === 'ArrowLeft') pvGo(-1); else if (e.key === '+' || e.key === '=') pvZoom(1.25); else if (e.key === '-') pvZoom(.8); });
+$('#dlgPreview').addEventListener('click', e => { if (e.target === e.currentTarget) e.currentTarget.close(); });
+
+/* =====================================================================
+   MOTOR CONTABLE LOCAL (RUC, serie, fecha, moneda, importes)
+   ===================================================================== */
+const RUC_W = [5, 4, 3, 2, 7, 6, 5, 4, 3, 2];
+function rucValido(r) {
+  if (!/^(10|15|16|17|20)\d{9}$/.test(r || '')) return false;
+  let s = 0; for (let i = 0; i < 10; i++) s += RUC_W[i] * +r[i];
+  return (11 - (s % 11)) % 10 === +r[10];
+}
+function parseNum(v) {                                                  // "1,234.56" · "1.234,56" · "12,5" · 99
+  if (typeof v === 'number') return isFinite(v) ? v : null;
+  let s = String(v ?? '').replace(/[^\d.,-]/g, ''); if (!/\d/.test(s)) return null;
+  const dec = Math.max(s.lastIndexOf(','), s.lastIndexOf('.')), tail = dec >= 0 ? s.length - dec - 1 : 0;
+  s = (dec >= 0 && tail >= 1 && tail <= 2) ? s.slice(0, dec).replace(/[.,]/g, '') + '.' + s.slice(dec + 1) : s.replace(/[.,]/g, '');
+  const n = Number(s); return isFinite(n) ? n : null;
+}
+const normTxt = s => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase();
+function firstAmount(s) {
+  const re = /\d{1,3}(?:[.,]\d{3})+[.,]\d{2}(?!\d)|\d+[.,]\d{2}(?!\d)/g; let m;
+  while ((m = re.exec(s))) { const p = s[m.index - 1]; if (p && /[\d.,]/.test(p)) continue; return parseNum(m[0]); }
+  return null;
+}
+function scanAmounts(txt, re, { win = 90, skip } = {}) {
+  const out = []; let m; re.lastIndex = 0;
+  while ((m = re.exec(txt))) {
+    if (m[0].length === 0) { re.lastIndex++; continue; }
+    if (skip && skip(txt, m)) continue;
+    const v = firstAmount(txt.slice(m.index + m[0].length, m.index + m[0].length + win));
+    if (v != null) out.push({ v, idx: m.index });
+  }
+  return out;
+}
+const MESES = { ENERO:1, FEBRERO:2, MARZO:3, ABRIL:4, MAYO:5, JUNIO:6, JULIO:7, AGOSTO:8, SETIEMBRE:9, SEPTIEMBRE:9, OCTUBRE:10, NOVIEMBRE:11, DICIEMBRE:12 };
+function validDate(d, m, y) { if (y < 2000 || y > 2100 || m < 1 || m > 12 || d < 1) return false; const dt = new Date(y, m - 1, d); return dt.getMonth() === m - 1 && dt.getDate() === d; }
+const fmtDMY = (d, m, y) => `${pad(d)}/${pad(m)}/${y}`;
+function parseDMY(s) {                                                  // "DD/MM/YYYY" | "YYYY-MM-DD" → {d,m,y}
+  let m = /^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})$/.exec((s || '').trim()); if (m && validDate(+m[1], +m[2], +m[3])) return { d: +m[1], m: +m[2], y: +m[3] };
+  m = /^(\d{4})[\/\-.](\d{1,2})[\/\-.](\d{1,2})$/.exec((s || '').trim()); if (m && validDate(+m[3], +m[2], +m[1])) return { d: +m[3], m: +m[2], y: +m[1] };
+  return null;
+}
+function findDates(txt) {
+  const out = [], push = (idx, d, m, y) => validDate(d, m, y) && out.push({ idx, s: fmtDMY(d, m, y) });
+  let m, re = /(\d{1,2})\s*[\/\-.]\s*(\d{1,2})\s*[\/\-.]\s*(\d{4})(?!\d)/g;
+  while ((m = re.exec(txt))) push(m.index, +m[1], +m[2], +m[3]);
+  re = /(\d{4})\s*[\/\-.]\s*(\d{1,2})\s*[\/\-.]\s*(\d{1,2})(?!\d)/g;
+  while ((m = re.exec(txt))) push(m.index, +m[3], +m[2], +m[1]);
+  re = /(\d{1,2})\s+DE\s+([A-Z]+)\s+(?:DEL?\s+)?(\d{4})/g;
+  while ((m = re.exec(txt))) if (MESES[m[2]]) push(m.index, +m[1], MESES[m[2]], +m[3]);
+  return out.sort((a, b) => a.idx - b.idx);
+}
+
+function parseInvoice(rawText, rawLines) {
+  const lines = rawLines && rawLines.length ? rawLines : rawText.split(/\n/).map(l => l.trim()).filter(Boolean);
+  const flat = normTxt(lines.join(' \n ')).replace(/[ \t]+/g, ' ');
+  const T = flat.replace(/\n/g, ' ');
+  const r = { tipo: '', ruc: '', rucCliente: '', razon: '', serie: '', fecha: '', moneda: '', subtotal: null, igv: null, total: null, totalEstimado: false, notas: [] };
+
+  // --- RUC: primer RUC con dígito verificador válido = emisor; el siguiente distinto = cliente
+  const rucs = []; let m; const rucRe = /(?:^|[^\d])((?:10|15|16|17|20)\d{9})(?!\d)/g;
+  while ((m = rucRe.exec(T))) rucs.push({ ruc: m[1], ok: rucValido(m[1]), lab: /R\.?\s?U\.?\s?C\.?\s*(?:N[°ºO]\.?)?\s*[:.]?\s*$/.test(T.slice(Math.max(0, m.index - 18), m.index + 1)) });
+  const emi = rucs.find(x => x.lab) || rucs.find(x => x.ok) || rucs[0];   // el emisor es el primer RUC rotulado del encabezado
+  if (emi) { r.ruc = emi.ruc; r.rucCliente = (rucs.find(x => x.ok && x.ruc !== emi.ruc) || {}).ruc || ''; }
+
+  // --- Tipo de comprobante (el que aparece primero en el encabezado)
+  const tipos = [[/NOTA DE CREDITO/, 'Nota de crédito'], [/NOTA DE DEBITO/, 'Nota de débito'], [/BOLETA/, 'Boleta'], [/FACTURA/, 'Factura'], [/RECIBO POR HONORARIOS/, 'Recibo por honorarios'], [/GUIA DE REMISION/, 'Guía de remisión'], [/TICKET/, 'Ticket']];
+  let best = { idx: 1e9, t: '' };
+  for (const [re, t] of tipos) { const x = re.exec(T); if (x && x.index < best.idx) best = { idx: x.index, t }; }
+  r.tipo = best.t;
+
+  // --- Serie-Número (E001-123, F001-00045, B001-9…)
+  const serRe = /(?:^|[^A-Z0-9])([FEBT][A-Z0-9]{3})\s*[-–—]\s*(\d{1,10})(?!\d)/g, sers = [];
+  while ((m = serRe.exec(T))) if (/\d/.test(m[1])) sers.push({ s: `${m[1]}-${m[2]}`, idx: m.index, ctx: /(FACTURA|BOLETA|NOTA|RECIBO|COMPROBANTE|N[°ºO]\b|NRO)/.test(T.slice(Math.max(0, m.index - 110), m.index)), guia: m[1][0] === 'T' });
+  const sPick = sers.find(x => x.ctx && !x.guia) || sers.find(x => !x.guia) || sers[0];
+  if (sPick) r.serie = sPick.s;
+  if (!r.tipo && r.serie) r.tipo = r.serie[0] === 'B' ? 'Boleta' : (r.serie[0] === 'F' || r.serie[0] === 'E') ? 'Factura' : '';
+
+  // --- Fecha de emisión (junto a su etiqueta; si no, la primera fecha del documento)
+  const dates = findDates(T);
+  const lab = /FECHA\s*(?:DE\s*)?(?:EMISION|EMIS\.?)?\s*[:.]?/g;
+  while ((m = lab.exec(T))) {
+    if (/^\s*(?:VENC|PAGO|VTO|TRASLADO|INICIO)/.test(T.slice(lab.lastIndex, lab.lastIndex + 16))) continue;
+    const d = dates.find(x => x.idx >= m.index && x.idx <= lab.lastIndex + 50);
+    if (d) { r.fecha = d.s; break; }
+  }
+  if (!r.fecha && dates.length) r.fecha = dates[0].s;
+
+  // --- Moneda
+  const mon = /MONEDA\s*[:.]?\s*(NUEVOS? SOLES|SOLES|PEN|S\/|DOLARES(?: AMERICANOS)?|USD|US\$|EUROS?|EUR)/.exec(T);
+  if (mon) r.moneda = /DOL|USD|US\$/.test(mon[1]) ? 'USD' : /EUR/.test(mon[1]) ? 'EUR' : 'PEN';
+  else {
+    const usd = (T.match(/US\s?\$|\bUSD\b|DOLARES/g) || []).length, eur = (T.match(/\bEUR\b|EUROS|€/g) || []).length, pen = (T.match(/S\/|SOLES|\bPEN\b/g) || []).length;
+    r.moneda = usd > pen && usd >= eur ? 'USD' : eur > pen ? 'EUR' : 'PEN';
+  }
+
+  // --- Importes (se ignoran porcentajes como "18.00%")
+  const A = T.replace(/\d+(?:[.,]\d+)?\s*%/g, ' ');
+  const pick = list => list.length ? list[list.length - 1].v : null;
+  const skipTotal = (txt, mm) => /[A-Z]$/.test(txt[mm.index - 1] || '') || /SUB\s*$/.test(txt.slice(Math.max(0, mm.index - 5), mm.index));
+  const tiers = [/IMPORTE\s+TOTAL(?:\s+A\s+PAGAR)?(?:\s+DE\s+LA\s+VENTA)?/g, /TOTAL\s+A\s+PAGAR/g, /IMPORTE\s+A\s+PAGAR/g, /TOTAL\s+PRECIO\s+DE\s+VENTA/g, /PRECIO\s+TOTAL/g, /MONTO\s+TOTAL/g, /TOTAL\s+VENTA/g, /TOTAL\s+GENERAL/g, /TOTAL\s+FACTURA/g,
+    /TOTAL(?!\s*(?:DESCUENTO|DCTO|IGV|I\.G\.V|GRAVAD|EXONERAD|INAFECT|GRATUIT|VALOR|ANTICIP|OP\b|ISC|OTROS|ICBPER|PAGINA|ITEM|CANTIDAD|BULTOS|PESO|DE\s+ITEMS))/g];
+  for (const re of tiers) { const v = pick(scanAmounts(A, re, { skip: skipTotal })); if (v != null) { r.total = v; break; } }
+  r.subtotal = pick(scanAmounts(A, /OP\.?\s*GRAVAD[AO]S?/g)) ?? pick(scanAmounts(A, /TOTAL\s+GRAVAD[AO]S?/g)) ?? pick(scanAmounts(A, /SUB\s*TOTAL/g)) ?? pick(scanAmounts(A, /BASE\s+IMPONIBLE/g)) ?? pick(scanAmounts(A, /TOTAL\s+VALOR\s+DE\s+VENTA/g));
+  r.igv = pick(scanAmounts(A, /(?:^|[^A-Z])I\.?\s?G\.?\s?V\.?(?![A-Z])/g, { win: 40 }));
+  if (r.total == null) {                                                 // último recurso: el mayor importe de la hoja
+    const all = [...A.matchAll(/\d{1,3}(?:[.,]\d{3})+[.,]\d{2}(?!\d)|\d+[.,]\d{2}(?!\d)/g)].map(x => parseNum(x[0])).filter(n => n != null);
+    if (all.length) { r.total = Math.max(...all); r.totalEstimado = true; }
+  }
+
+  // --- Razón social del emisor (heurística: primera línea del encabezado con forma societaria)
+  const soc = /\b(?:S\.?\s?A\.?\s?C|S\.?\s?A\.?\s?A|S\.?\s?R\.?\s?L|E\.?\s?I\.?\s?R\.?\s?L|S\.?\s?C\.?\s?R\.?\s?L|S\.?\s?A)\b\.?/;
+  const segs = lines.slice(0, 14).flatMap(l => l.split(/\s{3,}/)).map(x => x.trim());
+  const cand = segs.find(l => soc.test(normTxt(l)) && !/FACTURA|BOLETA|R\.?U\.?C\b|SE[ÑN]OR|CLIENTE|ADQUIR|DIRECCI/i.test(normTxt(l)) && l.length < 90);
+  if (cand) r.razon = cand;
+  return r;
+}
+
+function computeFlags(r) {
+  const f = [];
+  if (r.error) f.push([r.error, 'bad']);
+  if (!r.ruc) f.push(['Sin RUC', 'warn']); else if (!rucValido(r.ruc)) f.push(['RUC inválido', 'bad']);
+  if (!r.serie) f.push(['Sin serie-número', 'warn']);
+  if (!r.fecha) f.push(['Sin fecha', 'warn']); else if (!parseDMY(r.fecha)) f.push(['Fecha no válida', 'warn']);
+  if (r.total == null) f.push(['Sin total', 'warn']);
+  else if (r.totalEstimado) f.push(['Total estimado', 'warn']);
+  if (r.subtotal != null && r.igv != null && r.total != null && Math.abs(r.subtotal + r.igv - r.total) > 0.06) f.push(['Subtotal+IGV ≠ Total', 'warn']);
+  (r.notas || []).forEach(n => f.push([n, 'warn']));
+  return f;
+}
+
+/* =====================================================================
+   OCR (Tesseract.js, carga perezosa) y IA Gemini
+   ===================================================================== */
+const TESS_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js';
+const loadScript = src => new Promise((res, rej) => { const s = document.createElement('script'); s.src = src; s.onload = res; s.onerror = () => rej(new Error('No se pudo descargar ' + src)); document.head.appendChild(s); });
+let ocrWorker = null, ocrLog = null;
+async function ocrCanvas(canvas) {
+  if (!ocrWorker) {
+    if (!window.Tesseract) await loadScript(TESS_URL);
+    ocrWorker = await Tesseract.createWorker('spa', 1, { logger: m => ocrLog && ocrLog(m) });
+  }
+  const { data } = await ocrWorker.recognize(canvas);
+  return data.text || '';
+}
+async function disposeOcr() { if (ocrWorker) { try { await ocrWorker.terminate(); } catch {} ocrWorker = null; } }
+
+async function geminiRequest(model, key, body, { retries = 3, timeout = 90000, onWait } = {}) {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
+  for (let attempt = 0; ; attempt++) {
+    const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), timeout); let res;
+    try { res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key }, body: JSON.stringify(body), signal: ctl.signal }); }
+    catch (e) { clearTimeout(t); if (attempt < retries) { await sleep(1500 * 2 ** attempt); continue; } throw new Error(e.name === 'AbortError' ? 'Tiempo de espera agotado' : 'Sin conexión con Google'); }
+    clearTimeout(t);
+    if (res.ok) return res.json();
+    let msg = ''; try { msg = (await res.json()).error?.message || ''; } catch {}
+    if ((res.status === 429 || res.status >= 500) && attempt < retries) {
+      const wait = res.status === 429 ? 15 * (attempt + 1) : 3 * 2 ** attempt;
+      for (let s = wait; s > 0; s--) { onWait && onWait(res.status === 429 ? `Cuota de Gemini alcanzada, reintentando en ${s}s…` : `Gemini ocupado, reintentando en ${s}s…`); await sleep(1000); }
+      continue;
+    }
+    if (res.status === 429) throw new Error('Límite de uso de la API gratuita alcanzado');
+    if (res.status === 400 || res.status === 401 || res.status === 403) throw new Error(`Gemini rechazó la petición (${res.status}): ${msg.slice(0, 160)}`);
+    if (res.status === 404) throw new Error('Modelo no encontrado: revisa el nombre en la configuración de IA');
+    throw new Error(`Error ${res.status} de Gemini ${msg.slice(0, 120)}`);
+  }
+}
+const AI_SCHEMA = { type: 'OBJECT', properties: {
+  tipo_documento: { type: 'STRING' }, ruc_emisor: { type: 'STRING' }, razon_social_emisor: { type: 'STRING' }, ruc_cliente: { type: 'STRING' },
+  serie_numero: { type: 'STRING' }, fecha_emision: { type: 'STRING' }, moneda: { type: 'STRING' },
+  subtotal: { type: 'NUMBER' }, igv: { type: 'NUMBER' }, total: { type: 'NUMBER' } },
+  required: ['ruc_emisor', 'serie_numero', 'fecha_emision', 'moneda', 'total'] };
+async function geminiInvoice({ key, model, text, imageB64, onWait }) {
+  const prompt = `Eres un asistente contable experto en comprobantes de pago electrónicos (Perú/Latinoamérica). Analiza la PRIMERA PÁGINA de este documento y devuelve solo JSON.
+Reglas:
+- ruc_emisor: RUC de 11 dígitos de quien EMITE el comprobante (no el del cliente/adquirente). ruc_cliente: el del cliente si aparece.
+- serie_numero: formato SERIE-CORRELATIVO tal como figura (ej. E001-123, F001-00045, B001-9).
+- fecha_emision: formato YYYY-MM-DD.
+- moneda: código ISO (PEN, USD o EUR).
+- subtotal: valor de venta/base imponible sin IGV; igv: monto del IGV; total: IMPORTE TOTAL a pagar (con IGV). Números sin separador de miles y con punto decimal.
+- tipo_documento: Factura, Boleta, Nota de crédito, Nota de débito u otro.
+- Si un dato no existe, usa "" (texto) o 0 (número). No inventes.${text ? `\n\nTexto extraído de la página (puede tener errores):\n${text.slice(0, 5000)}` : ''}`;
+  const parts = [{ text: prompt }];
+  if (imageB64) parts.push({ inline_data: { mime_type: 'image/jpeg', data: imageB64 } });
+  const data = await geminiRequest(model, key, { contents: [{ parts }], generationConfig: { temperature: 0, responseMimeType: 'application/json', responseSchema: AI_SCHEMA } }, { onWait });
+  if (data.promptFeedback?.blockReason) throw new Error('Gemini bloqueó el contenido: ' + data.promptFeedback.blockReason);
+  const out = (data.candidates?.[0]?.content?.parts || []).map(p => p.text || '').join('').trim().replace(/^```(?:json)?|```$/g, '');
+  if (!out) throw new Error('Respuesta vacía de Gemini');
+  return JSON.parse(out);
+}
+function mergeAi(local, ai) {                                           // combina IA + motor local, priorizando lo verificable
+  const r = { ...local, notas: [...local.notas] };
+  const dig = s => String(s || '').replace(/\D/g, '');
+  const aiRuc = dig(ai.ruc_emisor);
+  if (rucValido(aiRuc)) r.ruc = aiRuc;
+  else if (rucValido(local.ruc)) { if (aiRuc && aiRuc !== local.ruc) r.notas.push(`IA leyó RUC ${aiRuc} (no válido); se usó el del texto`); }
+  else if (aiRuc.length === 11) r.ruc = aiRuc;
+  const aiCli = dig(ai.ruc_cliente); if (rucValido(aiCli) && aiCli !== r.ruc) r.rucCliente = aiCli;
+  const ser = /^([FEBT][A-Z0-9]{3})\s*[-–—]\s*(\d{1,10})$/i.exec(String(ai.serie_numero || '').trim());
+  if (ser) r.serie = `${ser[1].toUpperCase()}-${ser[2]}`;
+  const d = parseDMY(ai.fecha_emision); if (d) r.fecha = fmtDMY(d.d, d.m, d.y);
+  const mo = String(ai.moneda || '').toUpperCase(); if (/^(PEN|USD|EUR)$/.test(mo)) r.moneda = mo; else if (/SOL|S\//.test(mo)) r.moneda = 'PEN'; else if (/DOL|US/.test(mo)) r.moneda = 'USD';
+  if (ai.razon_social_emisor && String(ai.razon_social_emisor).trim()) r.razon = String(ai.razon_social_emisor).trim();
+  if (ai.tipo_documento && String(ai.tipo_documento).trim()) r.tipo = String(ai.tipo_documento).trim();
+  const num = v => { const n = parseNum(v); return n != null && n > 0 ? n : null; };
+  const t = num(ai.total);
+  if (t != null) { if (local.total != null && !local.totalEstimado && Math.abs(local.total - t) > 0.01) r.notas.push(`Total del texto: ${fmtMoney(local.total)}`); r.total = t; r.totalEstimado = false; }
+  r.subtotal = num(ai.subtotal) ?? r.subtotal; r.igv = num(ai.igv) ?? r.igv;
+  return r;
+}
+
+/* =====================================================================
+   PESTAÑA 1 · EXTRACTOR DE FACTURAS
+   ===================================================================== */
+let busyFact = false, batch = null;
+const progFact = Progress($('#progFact'), { cancellable: true });
+const progDl = Progress($('#dlProg'));
+
+const qFact = new FileQueue({
+  listEl: $('#qFactList'), wrapEl: $('#qFactWrap'), countEl: $('#qFactCount'), pagesEl: $('#qFactPages'),
+  previewLabel: '1ª hoja', sortBatch: true,
+  onPreview: (it, p) => openPreview(it.file, p),
+  onChange: q => { const b = $('#btnProcess'); b.disabled = busyFact || q.items.length === 0; b.textContent = q.items.length ? `⚡ Extraer 1ª página de ${q.items.length} PDF${q.items.length > 1 ? 's' : ''}` : '⚡ Extraer 1ª página'; },
+});
+bindDrop($('#dzFact'), $('#inFact'), f => qFact.add(f), [$('#inFactFolder')]);
+$('#btnPickFact').onclick = () => $('#inFact').click();
+$('#btnPickFolderFact').onclick = () => $('#inFactFolder').click();
+$('#btnClearFact').onclick = () => qFact.clear();
+$$('#qFactWrap [data-sort]').forEach(b => b.onclick = () => qFact.sort(b.dataset.sort));
+
+// --- opciones (persistentes)
+const OPT_IDS = ['nameMode', 'namePattern', 'filePrefix', 'fileSuffix', 'mergedName', 'optExtract', 'optOcr', 'optForceOcr', 'optAi'];
+function restoreOpts() {
+  const s = store.get('opts', {});
+  OPT_IDS.forEach(id => { const el = $('#' + id); if (!(id in s)) return; if (el.type === 'checkbox') el.checked = !!s[id]; else el.value = s[id]; });
+}
+function saveOpts() { const s = {}; OPT_IDS.forEach(id => { const el = $('#' + id); s[id] = el.type === 'checkbox' ? el.checked : el.value; }); store.set('opts', s); }
+function syncOptsUi() {
+  const mode = $('#nameMode').value;
+  show($('#namePatternWrap'), mode === 'custom');
+  if (mode !== 'original') $('#optExtract').checked = true;                // los nombres con datos requieren leer la factura
+  const on = $('#optExtract').checked;
+  $('#extractSub').style.opacity = on ? 1 : .45;
+  ['optOcr', 'optForceOcr', 'optAi'].forEach(id => $('#' + id).disabled = !on);
+  if (!$('#optOcr').checked) $('#optForceOcr').checked = false;
+  $('#optForceOcr').disabled = !on || !$('#optOcr').checked;
+  updateAiUi();
+}
+OPT_IDS.forEach(id => $('#' + id).addEventListener('input', () => { if (id === 'optExtract' && !$('#optExtract').checked && $('#nameMode').value !== 'original') { $('#nameMode').value = 'original'; } syncOptsUi(); saveOpts(); }));
+$('#optForceOcr').addEventListener('change', () => { if ($('#optForceOcr').checked) $('#optOcr').checked = true; });
+$('#optAi').addEventListener('change', () => { if ($('#optAi').checked && !getKey()) { $('#optAi').checked = false; openAi(); } saveOpts(); });
+
+function readOpts() {
+  return { mode: $('#nameMode').value, pattern: $('#namePattern').value, prefix: $('#filePrefix').value.trim(), suffix: $('#fileSuffix').value.trim(),
+    mergedName: $('#mergedName').value.trim(), extract: $('#optExtract').checked, ocr: $('#optOcr').checked, forceOcr: $('#optForceOcr').checked,
+    ai: $('#optAi').checked && !!getKey() };
+}
+function buildOutName(it, o) {
+  const base = it.name.replace(/\.pdf$/i, ''), r = it.row;
+  let name = base;
+  if (o.mode !== 'original' && r) {
+    const pat = o.mode === 'serie' ? '{serie}' : o.mode === 'ruc_serie' ? '{ruc}_{serie}' : (o.pattern || '{nombre}');
+    let missing = false;
+    const v = { nombre: base, ruc: r.ruc, serie: r.serie, fecha: (r.fecha || '').replace(/\//g, '-'), total: r.total != null ? r.total.toFixed(2) : '' };
+    name = pat.replace(/\{(\w+)\}/g, (_, k) => { const x = v[k]; if (x === undefined || x === '') { missing = true; return ''; } return x; });
+    if (missing || !sanitizeName(name).replace(/[-_ ]/g, '')) name = base;
+  }
+  return ensurePdfExt(o.prefix + name + o.suffix, base + '.pdf');
+}
+function computeOutNames() { const used = new Set(); batch.items.forEach(it => { if (it.singleBytes) it.outName = uniqueName(buildOutName(it, batch.opts), used); }); }
+
+// --- análisis de la 1ª página
+async function analyzeFirstPage(buf, o, setStatus) {
+  const pdf = await openPdfJs(buf);
+  try {
+    const page = await pdf.getPage(1);
+    let lines = await pageTextLines(page), text = lines.join('\n'), method = 'Texto digital';
+    const scanned = text.replace(/\s/g, '').length < 25;
+    const notas = [];
+    if (o.ocr && (scanned || o.forceOcr)) {
+      setStatus('Aplicando OCR a la página 1…');
+      ocrLog = m => { if (m.status === 'recognizing text') setStatus(`OCR: ${Math.round(m.progress * 100)}%`); else if (m.status) setStatus('Preparando OCR…'); };
+      text = await ocrCanvas(await renderPage(page, { maxSide: 2400 }));
+      lines = text.split(/\n/).map(l => l.trim()).filter(Boolean); method = 'OCR';
+    } else if (scanned && !o.ai) notas.push('Página escaneada: activa OCR o IA');
+    let r = parseInvoice(text, lines); r.notas.push(...notas);
+    if (o.ai && (text.length > 10 || getAiImage())) {
       try {
-        const mergedPdf = await PDFLib.PDFDocument.create();
-        const total = selectedFiles.length;
+        setStatus('Consultando IA Gemini…');
+        let imageB64 = null;
+        if (getAiImage()) imageB64 = (await renderPage(page, { maxSide: 1700 })).toDataURL('image/jpeg', 0.85).split(',')[1];
+        const ai = await geminiInvoice({ key: getKey(), model: getAiModel(), text, imageB64, onWait: setStatus });
+        r = mergeAi(r, ai); method += ' + IA';
+      } catch (e) { r.notas.push('IA no disponible: ' + (e.message || e)); }
+    }
+    r.metodo = method; return r;
+  } finally { try { pdf.destroy(); } catch {} }
+}
 
-        for (let i = 0; i < total; i++) {
-          const file = selectedFiles[i];
-          statusText.innerText = `Procesando (${i + 1}/${total}): ${file.name}`;
-          progressBar.style.width = `${Math.round(((i + 1) / total) * 90)}%`;
-
-          const arrayBuffer = await file.arrayBuffer();
-          const doc = await PDFLib.PDFDocument.load(arrayBuffer);
-
-          if (mode === 'first_only') {
-            // Extrae solo la primera hoja (índice 0)
-            if (doc.getPageCount() > 0) {
-              const [copiedPage] = await mergedPdf.copyPages(doc, [0]);
-              mergedPdf.addPage(copiedPage);
-            }
-          } else {
-            // Une todas las hojas del archivo
-            const pageIndices = doc.getPageIndices();
-            const copiedPages = await mergedPdf.copyPages(doc, pageIndices);
-            copiedPages.forEach(p => mergedPdf.addPage(p));
-          }
+async function processInvoices() {
+  if (busyFact || !qFact.items.length) return;
+  const o = readOpts(); saveOpts();
+  if (o.mode !== 'original') o.extract = true;
+  busyFact = true; $('#btnProcess').disabled = true; show($('#resFact'), false);
+  qFact.items.forEach(i => { i.status = 'idle'; i.error = ''; }); qFact.render();
+  progFact.start('Iniciando…');
+  const items = [], errors = [];
+  const merged = await PDFLib.PDFDocument.create();
+  let mergedCount = 0, cancelled = false;
+  const list = [...qFact.items], total = list.length;
+  try {
+    for (let i = 0; i < total; i++) {
+      if (progFact.cancelled) { cancelled = true; list.slice(i).forEach(x => x.status = 'cancel'); break; }
+      const e = list[i]; e.status = 'working'; qFact.renderSoon();
+      const label = `(${i + 1}/${total}) ${e.file.name}`;
+      progFact.set((i / total) * 100, `Extrayendo 1ª hoja ${label}`);
+      await tick();
+      const rec = { id: e.id, name: e.file.name, file: e.file, singleBytes: null, row: null };
+      try {
+        const buf = await e.file.arrayBuffer();
+        const src = await loadLib(buf);
+        if (src.getPageCount() < 1) throw new Error('El PDF no tiene páginas');
+        const single = await subsetDoc(src, [0]);                       // copia directa de la página 1, sin recomprimir
+        rec.singleBytes = await single.save();
+        const [pg] = await merged.copyPages(single, [0]); merged.addPage(pg); mergedCount++;
+        if (o.extract) {
+          try { rec.row = await analyzeFirstPage(buf, o, msg => progFact.text(`${msg} ${label}`)); }
+          catch (ex) { rec.row = { tipo: '', ruc: '', rucCliente: '', razon: '', serie: '', fecha: '', moneda: '', subtotal: null, igv: null, total: null, notas: [], metodo: 'Error', error: 'Error de lectura: ' + (ex.message || ex) }; }
         }
-
-        statusText.innerText = 'Generando archivo unificado final...';
-        progressBar.style.width = '95%';
-
-        const pdfBytes = await mergedPdf.save();
-        const blob = new Blob([pdfBytes], { type: 'application/pdf' });
-        const url = URL.createObjectURL(blob);
-
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = mode === 'first_only' ? 'facturas_primeras_hojas_unificadas.pdf' : 'documentos_unificados.pdf';
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-
-        progressBar.style.width = '100%';
-        statusText.innerText = '¡Completado con éxito! Tu descarga ha comenzado.';
-
-        setTimeout(() => {
-          statusContainer.classList.add('hidden');
-          processBtn.disabled = false;
-        }, 3000);
-
-      } catch (err) {
-        console.error(err);
-        alert('Ocurrió un error al procesar los documentos: ' + err.message);
-        statusContainer.classList.add('hidden');
-        processBtn.disabled = false;
+        e.status = 'ok';
+      } catch (ex) {
+        e.status = 'error'; e.error = ex?.message || String(ex); errors.push({ name: e.file.name, msg: e.error });
+        if (!rec.singleBytes) { qFact.renderSoon(); continue; }
       }
-    });
-  </script>
+      items.push(rec); qFact.renderSoon();
+    }
+    progFact.set(100, 'Generando PDF consolidado…'); await tick();
+    const mergedBlob = mergedCount ? pdfBlob(await merged.save()) : null;
+    batch = { items, opts: o, mergedBlob, errors, cancelled, total };
+    renderResults();
+    if (cancelled) toast('Proceso cancelado: se conservó lo ya procesado', 'warn');
+    else toast(`Listo: ${items.length} de ${total} facturas procesadas`, errors.length ? 'warn' : 'ok');
+  } catch (ex) {
+    console.error(ex); toast('Error inesperado: ' + (ex.message || ex), 'bad', 8000);
+  } finally {
+    await disposeOcr(); progFact.hide(); busyFact = false; qFact.render();
+  }
+}
+$('#btnProcess').onclick = processInvoices;
+
+// --- resultados
+function totalsByCurrency() {
+  const t = {};
+  batch.items.forEach(it => { const r = it.row; if (r && r.total != null) { (t[r.moneda || 'PEN'] ||= { n: 0, total: 0 }); t[r.moneda || 'PEN'].n++; t[r.moneda || 'PEN'].total += r.total; } });
+  return t;
+}
+function updateTotals() {
+  if (!batch?.opts.extract) return;
+  const t = totalsByCurrency(); const keys = Object.keys(t);
+  $('#totalsLine').innerHTML = keys.length ? 'Suma de totales: ' + keys.map(k => `<span class="badge b-blue">${esc(SYM[k] || k)} ${fmtMoney(t[k].total)} <span class="font-normal">(${t[k].n})</span></span>`).join(' ') : '';
+}
+function statChip(txt, cls) { return `<span class="badge ${cls} !text-xs !py-1 !px-2.5">${txt}</span>`; }
+function renderResults() {
+  const b = batch, o = b.opts, rows = b.items.filter(i => i.row);
+  show($('#resFact'), true);
+  $('#resTitle').textContent = b.cancelled ? 'Proceso cancelado (resultados parciales)' : '¡Listo!';
+  $('#resSub').textContent = o.extract ? 'Descarga tus archivos o revisa y corrige los datos detectados.' : 'Descarga tus archivos de 1 sola página.';
+  const warn = rows.filter(i => computeFlags(i.row).length).length;
+  $('#resStats').innerHTML = statChip(`✔ ${b.items.length} procesados`, 'b-ok') + (o.extract && warn ? statChip(`⚠ ${warn} con avisos`, 'b-warn') : '') + (b.errors.length ? statChip(`✖ ${b.errors.length} con error`, 'b-bad') : '');
+  const eb = $('#errBox'); show(eb, b.errors.length > 0);
+  eb.innerHTML = b.errors.length ? `<b>Archivos con problemas:</b><ul class="list-disc pl-5 mt-1 space-y-0.5">${b.errors.map(e => `<li><b>${esc(e.name)}</b> — ${esc(e.msg)}</li>`).join('')}</ul>` : '';
+  $('#btnDlZip').disabled = !b.items.length; $('#btnDlMerged').disabled = !b.mergedBlob;
+  show($('#btnDlExcel'), o.extract && rows.length > 0); show($('#btnCopy'), o.extract && rows.length > 0);
+  show($('#dataWrap'), o.extract && rows.length > 0);
+  if (o.extract) { renderTable(); updateTotals(); }
+  $('#resFact').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+function flagsHtml(r) { const f = computeFlags(r); return f.length ? f.map(([t, l]) => `<span class="badge ${l === 'bad' ? 'b-bad' : 'b-warn'}" title="${esc(t)}">${esc(t)}</span>`).join(' ') : '<span class="badge b-ok">✔ OK</span>'; }
+function rowClass(r) { const f = computeFlags(r); return f.some(x => x[1] === 'bad') ? 'has-bad' : f.length ? 'has-warn' : ''; }
+function renderTable() {
+  const rows = batch.items.filter(i => i.row);
+  $('#dataBody').innerHTML = rows.map((it, n) => {
+    const r = it.row, cell = (f, cls = '') => `<td><input class="cell ${cls}" data-f="${f}" value="${esc(r[f])}" aria-label="${f}"></td>`;
+    const amt = f => `<td><input class="cell num" data-f="${f}" value="${r[f] == null ? '' : r[f].toFixed(2)}" inputmode="decimal" aria-label="${f}"></td>`;
+    return `<tr data-id="${it.id}" class="${rowClass(r)}">
+      <td class="sticky-c text-slate-400 text-center bg-white">${n + 1}</td>
+      <td class="max-w-[14rem]"><div class="truncate font-medium px-1" title="${esc(it.name)}">${esc(it.name)}</div></td>
+      ${cell('tipo')}${cell('ruc', 'mono')}${cell('razon')}${cell('serie', 'mono font-bold')}${cell('fecha')}
+      <td><select class="cell" data-f="moneda" aria-label="moneda">${['PEN', 'USD', 'EUR'].map(m => `<option ${r.moneda === m ? 'selected' : ''}>${m}</option>`).join('')}</select></td>
+      ${amt('subtotal')}${amt('igv')}${amt('total')}
+      <td data-role="flags" class="min-w-[9rem]">${flagsHtml(r)}</td>
+      <td><span class="badge b-gray">${esc(r.metodo || '')}</span></td>
+      <td><button class="btn btn-ghost btn-xs" data-act="pv" title="Ver 1ª hoja" aria-label="Ver 1ª hoja">👁</button></td></tr>`;
+  }).join('');
+}
+$('#dataBody').addEventListener('input', e => {
+  const el = e.target, tr = el.closest('tr'), f = el.dataset.f; if (!tr || !f) return;
+  const it = batch.items.find(x => x.id === +tr.dataset.id), r = it.row;
+  if (['subtotal', 'igv', 'total'].includes(f)) { r[f] = el.value.trim() === '' ? null : parseNum(el.value); if (f === 'total') r.totalEstimado = false; }
+  else r[f] = f === 'ruc' ? el.value.replace(/\D/g, '').slice(0, 11) : el.value;
+  if (f === 'ruc' && el.value !== r.ruc) el.value = r.ruc;
+  tr.className = rowClass(r); tr.querySelector('[data-role=flags]').innerHTML = flagsHtml(r); updateTotals();
+});
+$('#dataBody').addEventListener('click', e => { const b = e.target.closest('[data-act=pv]'); if (b) openPreview(batch.items.find(x => x.id === +b.closest('tr').dataset.id).file, 1); });
+$('#dataFilter').addEventListener('input', e => {
+  const q = normTxt(e.target.value.trim());
+  $$('#dataBody tr').forEach(tr => { const it = batch.items.find(x => x.id === +tr.dataset.id), r = it.row; tr.style.display = !q || normTxt([it.name, r.ruc, r.razon, r.serie, r.fecha, r.tipo].join(' ')).includes(q) ? '' : 'none'; });
+});
+
+// --- descargas
+$('#btnDlZip').onclick = async () => {
+  if (!batch) return; const b = $('#btnDlZip'); b.disabled = true;
+  try {
+    progDl.start('Empaquetando ZIP…'); computeOutNames(); const zip = new JSZip();
+    batch.items.forEach(it => it.singleBytes && zip.file(it.outName, it.singleBytes, { binary: true }));
+    const blob = await zip.generateAsync({ type: 'blob', compression: 'STORE' }, m => progDl.set(m.percent, 'Empaquetando ZIP…'));
+    download(blob, 'Facturas_1ra_Hoja.zip'); toast('ZIP descargado', 'ok');
+  } catch (e) { toast('No se pudo crear el ZIP: ' + (e.message || e), 'bad'); } finally { progDl.hide(); b.disabled = false; }
+};
+$('#btnDlMerged').onclick = () => { if (!batch?.mergedBlob) return; const n = ensurePdfExt(batch.opts.mergedName, 'Facturas_Unificadas.pdf'); download(batch.mergedBlob, n); toast('PDF consolidado descargado', 'ok'); };
+function tableMatrix() {
+  computeOutNames();
+  return batch.items.filter(i => i.row).map((it, n) => {
+    const r = it.row; return [n + 1, it.name, it.outName || '', r.tipo, r.ruc, r.razon, r.rucCliente, r.serie, r.fecha, r.moneda, r.subtotal, r.igv, r.total, computeFlags(r).map(f => f[0]).join('; '), r.metodo || ''];
+  });
+}
+const XL_HEAD = ['N°', 'Archivo original', 'Archivo generado', 'Tipo', 'RUC emisor', 'Razón social', 'RUC cliente', 'Serie-Número', 'Fecha emisión', 'Moneda', 'Subtotal', 'IGV', 'Total', 'Avisos', 'Método'];
+$('#btnDlExcel').onclick = () => {
+  if (!window.XLSX) return toast('La librería de Excel no está disponible', 'bad');
+  const body = tableMatrix().map(row => row.map((v, c) => {
+    if (c === 8) { const d = parseDMY(v); return d ? new Date(d.y, d.m - 1, d.d, 12) : v; }   // fecha real de Excel
+    return v === null ? '' : v;
+  }));
+  const ws = XLSX.utils.aoa_to_sheet([XL_HEAD, ...body], { cellDates: true });
+  body.forEach((row, i) => {
+    if (row[8] instanceof Date) ws[XLSX.utils.encode_cell({ r: i + 1, c: 8 })].z = 'dd/mm/yyyy';
+    [10, 11, 12].forEach(c => { const cell = ws[XLSX.utils.encode_cell({ r: i + 1, c })]; if (cell && cell.t === 'n') cell.z = '#,##0.00'; });
+  });
+  ws['!cols'] = [5, 34, 34, 14, 14, 36, 14, 16, 12, 8, 12, 12, 13, 40, 16].map(w => ({ wch: w }));
+  ws['!autofilter'] = { ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: body.length, c: XL_HEAD.length - 1 } }) };
+  const t = totalsByCurrency();
+  const ws2 = XLSX.utils.aoa_to_sheet([['Moneda', 'Comprobantes', 'Total'], ...Object.entries(t).map(([k, v]) => [k, v.n, Math.round(v.total * 100) / 100])]);
+  Object.keys(t).forEach((_, i) => { const c = ws2[XLSX.utils.encode_cell({ r: i + 1, c: 2 })]; if (c) c.z = '#,##0.00'; });
+  ws2['!cols'] = [{ wch: 10 }, { wch: 14 }, { wch: 16 }];
+  const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Facturas'); XLSX.utils.book_append_sheet(wb, ws2, 'Resumen');
+  XLSX.writeFile(wb, `Reporte_Facturas_${new Date().toISOString().slice(0, 10)}.xlsx`, { cellDates: true });
+  toast('Excel descargado', 'ok');
+};
+$('#btnCopy').onclick = async () => {
+  const tsv = [XL_HEAD, ...tableMatrix().map(r => r.map(v => v == null ? '' : String(v).replace(/[\t\n]/g, ' ')))].map(r => r.join('\t')).join('\n');
+  try { await navigator.clipboard.writeText(tsv); }
+  catch { const ta = document.createElement('textarea'); ta.value = tsv; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); }
+  toast('Tabla copiada: pégala en Excel o Google Sheets', 'ok');
+};
+
+/* =====================================================================
+   PESTAÑA 2 · UNIR PDFs
+   ===================================================================== */
+let busyUnir = false, lastUnion = null;
+const progUnir = Progress($('#progUnir'));
+const qUnir = new FileQueue({
+  listEl: $('#qUnirList'), wrapEl: $('#qUnirWrap'), countEl: $('#qUnirCount'), pagesEl: $('#qUnirPages'), previewLabel: 'Ver',
+  onPreview: (it, p) => openPreview(it.file, p),
+  onChange: q => { $('#btnUnir').disabled = busyUnir || q.items.length < 1; },
+});
+bindDrop($('#dzUnir'), $('#inUnir'), f => qUnir.add(f));
+$('#btnClearUnir').onclick = () => qUnir.clear();
+$$('#qUnirWrap [data-sort]').forEach(b => b.onclick = () => qUnir.sort(b.dataset.sort));
+$('#btnUnir').onclick = async () => {
+  if (busyUnir || !qUnir.items.length) return;
+  busyUnir = true; $('#btnUnir').disabled = true; show($('#unirDone'), false); progUnir.start('Uniendo…');
+  const out = await PDFLib.PDFDocument.create(), list = [...qUnir.items], fails = []; let pages = 0, ok = 0;
+  try {
+    for (let i = 0; i < list.length; i++) {
+      const it = list[i]; it.status = 'working'; qUnir.renderSoon();
+      progUnir.set((i / list.length) * 100, `Uniendo (${i + 1}/${list.length}): ${it.file.name}`); await tick();
+      try {
+        const doc = await loadLib(await it.file.arrayBuffer());
+        (await out.copyPages(doc, doc.getPageIndices())).forEach(p => out.addPage(p));
+        pages += doc.getPageCount(); ok++; it.status = 'ok';
+      } catch (e) { it.status = 'error'; it.error = e.message || String(e); fails.push(it.file.name); }
+      qUnir.renderSoon();
+    }
+    if (!ok) throw new Error('Ningún PDF se pudo leer');
+    progUnir.set(100, 'Guardando…'); await tick();
+    lastUnion = { blob: pdfBlob(await out.save()), name: ensurePdfExt($('#unirName').value, 'Documentos_Unidos.pdf') };
+    download(lastUnion.blob, lastUnion.name);
+    $('#unirDoneText').textContent = `✅ ${ok} PDF unidos · ${pages} páginas · ${fmtBytes(lastUnion.blob.size)}${fails.length ? ` · ${fails.length} omitidos por error` : ''}`;
+    show($('#unirDone'), true); toast(fails.length ? `Unido con ${fails.length} archivo(s) omitido(s)` : 'PDF unido y descargado', fails.length ? 'warn' : 'ok');
+  } catch (e) { toast('No se pudo unir: ' + (e.message || e), 'bad', 7000); }
+  finally { progUnir.hide(); busyUnir = false; qUnir.render(); }
+};
+$('#btnUnirAgain').onclick = () => lastUnion && download(lastUnion.blob, lastUnion.name);
+
+/* =====================================================================
+   PESTAÑA 3 · DIVIDIR / EXTRAER
+   ===================================================================== */
+const sp = { file: null, lib: null, pdf: null, total: 0, sel: new Set(), last: null, obs: null, base: '' };
+const progSplit = Progress($('#progSplit'));
+bindDrop($('#dzSplit'), $('#inSplit'), files => { const f = files.find(isPdf); if (!f) return toast('Elige un archivo PDF', 'warn'); loadSplit(f); });
+
+function compressRanges(idx) {
+  const a = [...idx].sort((x, y) => x - y), out = [];
+  for (let i = 0; i < a.length;) { let j = i; while (j + 1 < a.length && a[j + 1] === a[j] + 1) j++; out.push(j > i ? `${a[i] + 1}-${a[j] + 1}` : `${a[i] + 1}`); i = j + 1; }
+  return out.join(', ');
+}
+function parseRanges(str, max) {
+  const idx = [], seen = new Set(), errors = [], add = i => { if (!seen.has(i)) { seen.add(i); idx.push(i); } };
+  const s = str.trim().toLowerCase().replace(/\s*[-–—]\s*/g, '-'); if (!s) return { idx, errors };
+  if (/^(todas?|all|\*)$/.test(s)) { for (let i = 0; i < max; i++) add(i); return { idx, errors }; }
+  if (/^(impares|odd)$/.test(s)) { for (let i = 0; i < max; i += 2) add(i); return { idx, errors }; }
+  if (/^(pares|even)$/.test(s)) { for (let i = 1; i < max; i += 2) add(i); return { idx, errors }; }
+  for (const part of s.split(/[,;\s]+/).filter(Boolean)) {
+    let m;
+    if ((m = /^(\d+)$/.exec(part))) { const n = +m[1]; if (n < 1 || n > max) errors.push(`${part} (el PDF tiene ${max} págs.)`); else add(n - 1); }
+    else if ((m = /^(\d*)-(\d*)$/.exec(part)) && (m[1] || m[2])) {
+      let a = m[1] ? +m[1] : 1, b = m[2] ? +m[2] : max; if (a > b) [a, b] = [b, a];
+      if (a > max || b < 1) { errors.push(`${part} (fuera de rango)`); continue; }
+      for (let i = Math.max(1, a); i <= Math.min(max, b); i++) add(i - 1);
+    } else errors.push(`"${part}" no se entiende`);
+  }
+  return { idx, errors };
+}
+async function loadSplit(file) {
+  if (sp.obs) sp.obs.disconnect(); if (sp.pdf) { try { sp.pdf.destroy(); } catch {} }
+  Object.assign(sp, { file, lib: null, pdf: null, total: 0, sel: new Set(), last: null, base: file.name.replace(/\.pdf$/i, '') });
+  $('#splitName').textContent = file.name; $('#splitInfo').textContent = 'Leyendo…';
+  try {
+    sp.pdf = await openPdfJs(file); sp.total = sp.pdf.numPages;
+  } catch (e) { $('#splitInfo').textContent = ''; $('#splitName').textContent = 'Arrastra aquí un PDF o haz clic para elegirlo'; show($('#splitTools'), false); return toast('No se pudo leer el PDF' + (/password/i.test(e?.name + e?.message) ? ' (tiene contraseña)' : ''), 'bad'); }
+  $('#splitInfo').textContent = `${sp.total} página${sp.total > 1 ? 's' : ''} · ${fmtBytes(file.size)}`;
+  $('#selTotal').textContent = sp.total; $('#rangeInput').value = ''; $('#rangeMsg').textContent = '';
+  show($('#splitTools'), true); buildGrid(); updateSel();
+}
+function buildGrid() {
+  const grid = $('#pgGrid'); grid.innerHTML = '';
+  grid.innerHTML = Array.from({ length: sp.total }, (_, i) => `<div class="pg" role="button" tabindex="0" data-i="${i}" aria-label="Página ${i + 1}"><canvas width="150" height="200"></canvas><span class="n">${i + 1}</span><span class="zoom" data-zoom title="Ampliar">🔍</span></div>`).join('');
+  sp.obs = new IntersectionObserver(ents => ents.forEach(async en => {
+    if (!en.isIntersecting) return; const el = en.target; sp.obs.unobserve(el);
+    try {
+      const page = await sp.pdf.getPage(+el.dataset.i + 1), cv = el.querySelector('canvas'), c = await renderPage(page, { width: 150 });
+      cv.width = c.width; cv.height = c.height; cv.getContext('2d').drawImage(c, 0, 0);
+    } catch {}
+  }), { root: grid, rootMargin: '300px' });
+  $$('.pg', grid).forEach(el => sp.obs.observe(el));
+}
+function updateSel() {
+  $$('#pgGrid .pg').forEach(el => el.classList.toggle('sel', sp.sel.has(+el.dataset.i)));
+  $('#selCount').textContent = sp.sel.size;
+  const none = sp.sel.size === 0;
+  ['btnExtractOne', 'btnExtractSep', 'btnDelete'].forEach(id => $('#' + id).disabled = none || busySplit);
+  ['btnSplitAll', 'btnSplitN'].forEach(id => $('#' + id).disabled = busySplit);
+  $('#btnDelete').disabled = none || sp.sel.size >= sp.total || busySplit;
+}
+$('#pgGrid').addEventListener('click', e => {
+  const el = e.target.closest('.pg'); if (!el) return; const i = +el.dataset.i;
+  if (e.target.closest('[data-zoom]')) return openPreview(sp.file, i + 1);
+  if (e.shiftKey && sp.last != null) { const [a, b] = [Math.min(sp.last, i), Math.max(sp.last, i)]; for (let k = a; k <= b; k++) sp.sel.add(k); }
+  else sp.sel.has(i) ? sp.sel.delete(i) : sp.sel.add(i);
+  sp.last = i; $('#rangeInput').value = compressRanges(sp.sel); $('#rangeMsg').textContent = ''; updateSel();
+});
+$('#pgGrid').addEventListener('keydown', e => { if ((e.key === 'Enter' || e.key === ' ') && e.target.classList.contains('pg')) { e.preventDefault(); e.target.click(); } });
+$('#pgGrid').addEventListener('dblclick', e => { const el = e.target.closest('.pg'); if (el) openPreview(sp.file, +el.dataset.i + 1); });
+$('#rangeInput').addEventListener('input', () => {
+  const { idx, errors } = parseRanges($('#rangeInput').value, sp.total);
+  sp.sel = new Set(idx); const m = $('#rangeMsg');
+  m.textContent = errors.length ? '⚠ ' + errors.join(' · ') : ''; m.style.color = errors.length ? '#b45309' : ''; updateSel();
+});
+$$('[data-sel]').forEach(b => b.onclick = () => {
+  const all = Array.from({ length: sp.total }, (_, i) => i), k = b.dataset.sel;
+  sp.sel = new Set(k === 'all' ? all : k === 'none' ? [] : k === 'odd' ? all.filter(i => i % 2 === 0) : k === 'even' ? all.filter(i => i % 2 === 1) : all.filter(i => !sp.sel.has(i)));
+  $('#rangeInput').value = compressRanges(sp.sel); $('#rangeMsg').textContent = ''; updateSel();
+});
+
+let busySplit = false;
+async function withSplit(fn) {
+  if (busySplit || !sp.file) return; busySplit = true; updateSel(); progSplit.start('Preparando…');
+  try { if (!sp.lib) sp.lib = await loadLib(await sp.file.arrayBuffer()); await fn(); }
+  catch (e) { console.error(e); toast('Error: ' + (e.message || e), 'bad', 7000); }
+  finally { progSplit.hide(); busySplit = false; updateSel(); }
+}
+function targetIdx() {                                                   // respeta el orden escrito por el usuario
+  const { idx, errors } = parseRanges($('#rangeInput').value, sp.total);
+  if (errors.length) throw new Error('Revisa el rango: ' + errors[0]);
+  if (!idx.length) throw new Error('Marca al menos una página');
+  return idx;
+}
+async function zipPages(groups, nameOf, zipName) {                       // groups: array de arrays de índices
+  const zip = new JSZip(), used = new Set();
+  for (let i = 0; i < groups.length; i++) {
+    progSplit.set((i / groups.length) * 90, `Creando archivo ${i + 1} de ${groups.length}…`);
+    zip.file(uniqueName(nameOf(groups[i], i), used), await (await subsetDoc(sp.lib, groups[i])).save(), { binary: true });
+    if (i % 5 === 4) await tick();
+  }
+  const blob = await zip.generateAsync({ type: 'blob', compression: 'STORE' }, m => progSplit.set(90 + m.percent / 10, 'Empaquetando ZIP…'));
+  download(blob, zipName); toast(`ZIP con ${groups.length} PDF descargado`, 'ok');
+}
+const wPad = () => String(sp.total).length;
+$('#btnExtractOne').onclick = () => withSplit(async () => {
+  const idx = targetIdx(); progSplit.set(40, 'Extrayendo páginas…'); await tick();
+  const bytes = await (await subsetDoc(sp.lib, idx)).save();
+  download(pdfBlob(bytes), ensurePdfExt(`${sp.base}_pags_${compressRanges(idx).replace(/, /g, '_')}`, 'Extraido.pdf')); toast(`${idx.length} página(s) extraída(s)`, 'ok');
+});
+$('#btnExtractSep').onclick = () => withSplit(async () => { const idx = targetIdx(); await zipPages(idx.map(i => [i]), g => `${sp.base}_pag_${pad(g[0] + 1, wPad())}.pdf`, `${sp.base}_paginas_seleccionadas.zip`); });
+$('#btnSplitAll').onclick = () => withSplit(async () => { await zipPages(Array.from({ length: sp.total }, (_, i) => [i]), g => `${sp.base}_pag_${pad(g[0] + 1, wPad())}.pdf`, `${sp.base}_paginas_separadas.zip`); });
+$('#btnSplitN').onclick = () => withSplit(async () => {
+  const n = Math.max(1, parseInt($('#chunkN').value) || 0); if (!n) throw new Error('Indica cuántas páginas por archivo');
+  const groups = []; for (let i = 0; i < sp.total; i += n) groups.push(Array.from({ length: Math.min(n, sp.total - i) }, (_, k) => i + k));
+  await zipPages(groups, g => `${sp.base}_pags_${pad(g[0] + 1, wPad())}-${pad(g[g.length - 1] + 1, wPad())}.pdf`, `${sp.base}_cada_${n}_paginas.zip`);
+});
+$('#btnDelete').onclick = () => withSplit(async () => {
+  const del = new Set(targetIdx()), keep = Array.from({ length: sp.total }, (_, i) => i).filter(i => !del.has(i));
+  if (!keep.length) throw new Error('No puedes eliminar todas las páginas');
+  progSplit.set(50, 'Generando PDF…'); await tick();
+  download(pdfBlob(await (await subsetDoc(sp.lib, keep)).save()), `${sp.base}_sin_paginas.pdf`); toast(`${del.size} página(s) eliminada(s)`, 'ok');
+});
+
+/* =====================================================================
+   IA · modal de configuración
+   ===================================================================== */
+const getAiModel = () => store.get('aiModel', 'gemini-2.5-flash') || 'gemini-2.5-flash';
+const getAiImage = () => store.get('aiImage', true);
+function updateAiUi() {
+  const has = !!getKey(), b = $('#aiBadge');
+  b.textContent = has ? 'Lista' : 'Desactivada'; b.className = 'text-[10px] font-bold px-1.5 py-0.5 rounded ' + (has ? 'bg-emerald-500/20 text-emerald-300' : 'bg-slate-700 text-slate-300');
+  const s = $('#optAiState'); s.textContent = has ? 'clave guardada' : 'sin clave'; s.className = 'badge ' + (has ? 'b-ok' : 'b-gray');
+  if (!has && $('#optAi').checked) $('#optAi').checked = false;
+}
+function openAi() { $('#aiKey').value = getKey(); $('#aiModel').value = getAiModel(); $('#aiImage').checked = getAiImage(); $('#aiTestMsg').textContent = ''; $('#aiKey').type = 'password'; $('#dlgAi').showModal(); }
+$('#btnAi').onclick = openAi; $('#aiClose').onclick = () => $('#dlgAi').close();
+$('#dlgAi').addEventListener('click', e => { if (e.target === e.currentTarget) e.currentTarget.close(); });
+$('#aiShow').onclick = () => { const k = $('#aiKey'); k.type = k.type === 'password' ? 'text' : 'password'; };
+$('#aiSave').onclick = () => {
+  setKey($('#aiKey').value.trim()); store.set('aiModel', $('#aiModel').value.trim() || 'gemini-2.5-flash'); store.set('aiImage', $('#aiImage').checked);
+  updateAiUi(); $('#dlgAi').close(); toast(getKey() ? 'Clave guardada en este navegador' : 'Clave eliminada', 'ok');
+};
+$('#aiDelete').onclick = () => { setKey(''); $('#aiKey').value = ''; updateAiUi(); $('#aiTestMsg').textContent = 'Clave eliminada.'; };
+$('#aiTest').onclick = async () => {
+  const key = $('#aiKey').value.trim(), model = $('#aiModel').value.trim() || 'gemini-2.5-flash', m = $('#aiTestMsg');
+  if (!key) { m.style.color = '#b45309'; m.textContent = 'Pega primero tu clave.'; return; }
+  m.style.color = '#475569'; m.textContent = 'Probando…'; $('#aiTest').disabled = true;
+  try { await geminiRequest(model, key, { contents: [{ parts: [{ text: 'Responde solo: OK' }] }] }, { retries: 0, timeout: 20000 }); m.style.color = '#047857'; m.textContent = '✔ Conexión correcta con ' + model; }
+  catch (e) { m.style.color = '#b91c1c'; m.textContent = '✖ ' + (e.message || e); }
+  finally { $('#aiTest').disabled = false; }
+};
+
+/* =====================================================================
+   Arranque
+   ===================================================================== */
+window.addEventListener('beforeunload', e => { if (busyFact || busyUnir || busySplit) { e.preventDefault(); e.returnValue = ''; } });
+restoreOpts(); syncOptsUi(); updateSel();
+switchTab(store.get('tab', 'facturas'));
+</script>
 </body>
 </html>
