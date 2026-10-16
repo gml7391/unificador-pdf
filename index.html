@@ -430,6 +430,7 @@
         <input id="aiKey" type="password" class="field" placeholder="AIzaSy…" autocomplete="off" spellcheck="false">
         <button type="button" class="btn btn-ghost btn-sm" id="aiShow" aria-label="Mostrar u ocultar clave">👁</button>
       </div>
+      <p id="aiKeyKind" class="hint"></p>
     </div>
     <div class="grid sm:grid-cols-2 gap-3">
       <div>
@@ -478,7 +479,7 @@ const store = {
   set(k, v) { try { localStorage.setItem('fps:' + k, JSON.stringify(v)); } catch {} },
 };
 const KEY_STORE = 'gemini_invoice_api_key';
-const getKey  = () => { try { return localStorage.getItem(KEY_STORE) || ''; } catch { return ''; } };
+const getKey  = () => { try { return String(localStorage.getItem(KEY_STORE) || '').replace(/["'\s]/g, ''); } catch { return ''; } };
 const setKey  = v => { try { v ? localStorage.setItem(KEY_STORE, v) : localStorage.removeItem(KEY_STORE); } catch {} };
 
 function toast(msg, type = 'info', ms = 4500) {
@@ -904,11 +905,21 @@ async function ocrCanvas(canvas) {
 }
 async function disposeOcr() { if (ocrWorker) { try { await ocrWorker.terminate(); } catch {} ocrWorker = null; } }
 
+const cleanKey = k => String(k || '').replace(/["'\s]/g, '');
+const isVertexKey = k => /^AQ\./.test(k);                               // claves de Vertex AI (empiezan con "AQ."); las de AI Studio empiezan con "AIza"
+const VERTEX_MODELS = ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.0-flash-001', 'gemini-2.5-pro'];
+function aiEndpoint(model, key) {
+  if (isVertexKey(key)) return { url: `https://aiplatform.googleapis.com/v1/publishers/google/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(key)}`, headers: { 'Content-Type': 'application/json' }, vertex: true };
+  return { url: `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key }, vertex: false };
+}
+const BAD_KEY_MSG = 'Google no reconoce esta clave. Cópiala completa y sin espacios. Las de Google AI Studio empiezan con "AIza" y las de Vertex AI con "AQ.".';
 async function geminiRequest(model, key, body, { retries = 3, timeout = 90000, onWait } = {}) {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
+  key = cleanKey(key);
+  const ep = aiEndpoint(model, key), url = ep.url;
+  if (ep.vertex) body = { ...body, contents: body.contents.map(c => ({ role: 'user', ...c })) };   // Vertex exige "role"
   for (let attempt = 0; ; attempt++) {
     const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), timeout); let res;
-    try { res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key }, body: JSON.stringify(body), signal: ctl.signal }); }
+    try { res = await fetch(url, { method: 'POST', headers: ep.headers, body: JSON.stringify(body), signal: ctl.signal }); }
     catch (e) { clearTimeout(t); if (attempt < retries) { await sleep(1500 * 2 ** attempt); continue; } throw new Error(e.name === 'AbortError' ? 'Tiempo de espera agotado' : 'Sin conexión con Google'); }
     clearTimeout(t);
     if (res.ok) return res.json();
@@ -919,6 +930,7 @@ async function geminiRequest(model, key, body, { retries = 3, timeout = 90000, o
       continue;
     }
     if (res.status === 429) throw new Error('Límite de uso de la API gratuita alcanzado');
+    if (/API key not valid|API_KEY_INVALID|expired/i.test(msg)) throw new Error(BAD_KEY_MSG);
     if (res.status === 400 || res.status === 401 || res.status === 403) throw new Error(`Gemini rechazó la petición (${res.status}): ${msg.slice(0, 160)}`);
     if (res.status === 404) throw new Error(`Modelo no encontrado (${model})`);
     throw new Error(`Error ${res.status} de Gemini ${msg.slice(0, 120)}`);
@@ -926,26 +938,33 @@ async function geminiRequest(model, key, body, { retries = 3, timeout = 90000, o
 }
 const GEM = 'https://generativelanguage.googleapis.com/v1beta/';
 async function listGeminiModels(key) {                                   // modelos que esta clave puede usar con generateContent
+  key = cleanKey(key);
+  if (isVertexKey(key)) return VERTEX_MODELS;                            // Vertex no permite listar con clave: se prueban en orden
   let res;
   try { res = await fetch(GEM + 'models?pageSize=200', { headers: { 'x-goog-api-key': key } }); }
   catch { throw new Error('Sin conexión con Google'); }
-  if (!res.ok) { let msg = ''; try { msg = (await res.json()).error?.message || ''; } catch {} throw new Error(`Google no aceptó la clave (${res.status}) ${msg.slice(0, 140)}`); }
+  if (!res.ok) { let msg = ''; try { msg = (await res.json()).error?.message || ''; } catch {} throw new Error(/API key not valid|API_KEY_INVALID|expired/i.test(msg) ? BAD_KEY_MSG : `Google no aceptó la clave (${res.status}) ${msg.slice(0, 140)}`); }
   const j = await res.json();
   return (j.models || []).filter(m => (m.supportedGenerationMethods || []).includes('generateContent') && /^models\/gemini/.test(m.name)).map(m => m.name.replace(/^models\//, ''));
 }
 function pickModel(list) {                                                // prefiere el Flash estable más reciente
+  if (list === VERTEX_MODELS) return list[0];
   const ver = n => parseFloat((/gemini-(\d+(?:\.\d+)?)/.exec(n) || [0, 0])[1]);
   const flash = list.filter(n => /^gemini-[\d.]+-flash$/.test(n)).sort((a, b) => ver(b) - ver(a));
   return flash[0] || list.find(n => n === 'gemini-flash-latest') || list.find(n => /flash/.test(n) && !/(image|tts|live|embed)/.test(n)) || list[0] || '';
 }
 async function geminiCall(model, key, body, opts) {                       // si el modelo no existe (404) busca uno válido y reintenta
+  key = cleanKey(key);
   try { return await geminiRequest(model, key, body, opts); }
   catch (e) {
     if (!/Modelo no encontrado/.test(e.message)) throw e;
-    const list = await listGeminiModels(key), alt = pickModel(list);
-    if (!alt || alt === model) throw new Error(`El modelo "${model}" no existe para tu clave. Abre ✨ IA Gemini y pulsa "Probar conexión" para elegir uno.`);
-    store.set('aiModel', alt); toast(`Modelo "${model}" no disponible; se usará "${alt}"`, 'warn', 6000);
-    return geminiRequest(alt, key, body, opts);
+    const tried = new Set([model]), list = await listGeminiModels(key), first = pickModel(list);
+    for (const alt of [first, ...list]) {
+      if (!alt || tried.has(alt)) continue; tried.add(alt);
+      try { const r = await geminiRequest(alt, key, body, opts); store.set('aiModel', alt); toast(`Modelo "${model}" no disponible; se usará "${alt}"`, 'warn', 6000); return r; }
+      catch (e2) { if (!/Modelo no encontrado/.test(e2.message)) throw e2; }
+    }
+    throw new Error(`Ningún modelo Gemini respondió con tu clave. Abre ✨ IA Gemini y pulsa "Probar conexión".`);
   }
 }
 const AI_SCHEMA = { type: 'OBJECT', properties: {
@@ -1409,30 +1428,37 @@ function updateAiUi() {
   const s = $('#optAiState'); s.textContent = has ? 'clave guardada' : 'sin clave'; s.className = 'badge ' + (has ? 'b-ok' : 'b-gray');
   if (!has && $('#optAi').checked) $('#optAi').checked = false;
 }
-function openAi() { $('#aiKey').value = getKey(); $('#aiModel').value = getAiModel(); $('#aiImage').checked = getAiImage(); $('#aiTestMsg').textContent = ''; $('#aiKey').type = 'password'; $('#dlgAi').showModal(); }
+function openAi() { $('#aiKey').value = getKey(); $('#aiKey').dispatchEvent(new Event('input')); $('#aiModel').value = getAiModel(); $('#aiImage').checked = getAiImage(); $('#aiTestMsg').textContent = ''; $('#aiKey').type = 'password'; $('#dlgAi').showModal(); }
 $('#btnAi').onclick = openAi; $('#aiClose').onclick = () => $('#dlgAi').close();
 $('#dlgAi').addEventListener('click', e => { if (e.target === e.currentTarget) e.currentTarget.close(); });
 $('#aiShow').onclick = () => { const k = $('#aiKey'); k.type = k.type === 'password' ? 'text' : 'password'; };
 $('#aiSave').onclick = () => {
-  setKey($('#aiKey').value.trim()); store.set('aiModel', $('#aiModel').value.trim() || 'gemini-flash-latest'); store.set('aiImage', $('#aiImage').checked);
+  setKey(cleanKey($('#aiKey').value)); store.set('aiModel', $('#aiModel').value.trim() || 'gemini-flash-latest'); store.set('aiImage', $('#aiImage').checked);
   updateAiUi(); $('#dlgAi').close(); toast(getKey() ? 'Clave guardada en este navegador' : 'Clave eliminada', 'ok');
 };
 $('#aiDelete').onclick = () => { setKey(''); $('#aiKey').value = ''; updateAiUi(); $('#aiTestMsg').textContent = 'Clave eliminada.'; };
 $('#aiTest').onclick = async () => {
-  const key = $('#aiKey').value.trim(), m = $('#aiTestMsg'), say = (c, t) => { m.style.color = c; m.textContent = t; };
+  const key = cleanKey($('#aiKey').value), m = $('#aiTestMsg'), say = (c, t) => { m.style.color = c; m.textContent = t; };
   if (!key) return say('#b45309', 'Pega primero tu clave.');
-  say('#475569', 'Consultando los modelos de tu clave…'); $('#aiTest').disabled = true;
+  say('#475569', 'Probando tu clave…'); $('#aiTest').disabled = true;
   try {
     const list = await listGeminiModels(key);
     if (!list.length) throw new Error('Tu clave es válida pero no tiene modelos Gemini disponibles');
     $('#aiModels').innerHTML = list.map(n => `<option value="${esc(n)}">`).join('');
-    let model = $('#aiModel').value.trim();
-    if (!list.includes(model)) { const alt = pickModel(list); say('#475569', `"${model}" no está disponible; usando "${alt}"…`); model = alt; $('#aiModel').value = alt; }
-    await geminiRequest(model, key, { contents: [{ parts: [{ text: 'Responde solo: OK' }] }] }, { retries: 1, timeout: 25000 });
-    say('#047857', `✔ Conexión correcta · modelo "${model}" · ${list.length} modelos disponibles. Pulsa Guardar.`);
+    const wanted = $('#aiModel').value.trim(), order = [...new Set([list.includes(wanted) ? wanted : '', pickModel(list), ...list].filter(Boolean))];
+    let used = '', lastErr = null;
+    for (const model of order) {
+      say('#475569', `Probando el modelo "${model}"…`);
+      try { await geminiRequest(model, key, { contents: [{ parts: [{ text: 'Responde solo: OK' }] }] }, { retries: 1, timeout: 25000 }); used = model; break; }
+      catch (e) { lastErr = e; if (!/Modelo no encontrado/.test(e.message)) throw e; }
+    }
+    if (!used) throw lastErr || new Error('Ningún modelo respondió');
+    $('#aiModel').value = used;
+    say('#047857', `✔ Conexión correcta (${isVertexKey(key) ? 'Vertex AI' : 'Google AI Studio'}) · modelo "${used}". Pulsa Guardar.`);
   } catch (e) { say('#b91c1c', '✖ ' + (e.message || e)); }
   finally { $('#aiTest').disabled = false; }
 };
+$('#aiKey').addEventListener('input', () => { const k = cleanKey($('#aiKey').value); $('#aiKeyKind').textContent = !k ? '' : isVertexKey(k) ? 'Tipo de clave detectado: Vertex AI (compatible).' : /^AIza/.test(k) ? 'Tipo de clave detectado: Google AI Studio (compatible).' : 'Formato no reconocido: revisa que sea la clave completa.'; });
 
 /* =====================================================================
    Arranque
