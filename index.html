@@ -151,6 +151,7 @@
       <button class="tab" role="tab" data-tab="facturas" aria-selected="true"><span class="ico">🧾</span><span>Extractor de facturas<small class="block text-[10px] font-normal text-slate-400">1ª página · datos · Excel</small></span></button>
       <button class="tab" role="tab" data-tab="unir" aria-selected="false"><span class="ico">📚</span><span>Unir PDFs<small class="block text-[10px] font-normal text-slate-400">Todas las páginas</small></span></button>
       <button class="tab" role="tab" data-tab="dividir" aria-selected="false"><span class="ico">✂️</span><span>Dividir / Extraer<small class="block text-[10px] font-normal text-slate-400">Rangos y separación</small></span></button>
+      <button class="tab" role="tab" data-tab="tedef" aria-selected="false"><span class="ico">🧮</span><span>Cruce con trama TEDEF<small class="block text-[10px] font-normal text-slate-400">Trama vs. facturas PDF</small></span></button>
       <div class="hidden lg:block mt-3 p-3 rounded-xl bg-white border border-slate-200 text-[11px] text-slate-500 leading-relaxed">
         <b class="text-slate-700">🔒 Privacidad</b><br>
         Tus PDFs se procesan en tu equipo. Solo si activas la IA de Gemini se envía la 1ª página a Google para leerla.
@@ -384,6 +385,42 @@
         </div>
       </div>
       <div id="progSplit" class="is-hidden bg-slate-50 p-4 rounded-xl border border-slate-200"></div>
+    </div>
+  </div>
+</section>
+
+<!-- ======================================================
+     PESTAÑA 4 · CRUCE CON TRAMA TEDEF
+     ====================================================== -->
+<section id="pane-tedef" class="space-y-5 is-hidden" role="tabpanel">
+  <div class="card p-5">
+    <h2 class="text-lg font-bold">Cruce con trama TEDEF</h2>
+    <p class="text-sm text-slate-600 mt-1">Sube la trama que envía la aseguradora (<code>.S01</code>, un ZIP, o los <code>.txt</code> sueltos). La app lee cada factura de la trama y la <b>compara con tus PDFs</b> ya procesados en la pestaña 1: serie-número, RUC, fecha e importe.</p>
+  </div>
+  <div class="card p-5 space-y-4">
+    <div id="dzTedef" class="dz" tabindex="0" role="button" aria-label="Seleccionar trama TEDEF">
+      <p class="text-sm font-bold text-slate-700">Arrastra aquí la trama (.S01, .zip o .txt)</p>
+      <p class="text-xs text-slate-500 mt-1">puedes subir varias tramas a la vez</p>
+      <input type="file" id="inTedef" multiple class="is-hidden">
+    </div>
+    <div id="tdMsg" class="is-hidden"></div>
+    <div id="tdWrap" class="is-hidden space-y-3">
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <div id="tdStats" class="flex flex-wrap gap-2 text-xs"></div>
+        <div class="flex gap-2">
+          <button id="tdRecheck" class="btn btn-ghost btn-sm">🔄 Volver a cruzar</button>
+          <button id="tdExcel" class="btn btn-teal btn-sm">📊 Excel</button>
+          <button id="tdClear" class="btn btn-danger btn-sm">Vaciar</button>
+        </div>
+      </div>
+      <div class="overflow-auto max-h-[30rem] custom-scroll border border-slate-200 rounded-xl">
+        <table class="dt">
+          <thead><tr><th>Serie-Número</th><th>Fecha</th><th>RUC IPRESS</th><th class="text-right">Total bruto</th><th class="text-right">Copago fijo</th><th class="text-right">Copago var.</th><th class="text-right">Neto IAFAS</th><th>Detalle</th><th>PDF</th><th>Resultado del cruce</th></tr></thead>
+          <tbody id="tdBody"></tbody>
+        </table>
+      </div>
+      <p class="hint">Interpretación de importes (deducida del formato): <b>Total bruto</b> = suma de servicios + farmacia; <b>Neto IAFAS</b> = bruto − copago fijo − copago variable. El total del PDF se acepta si coincide con el bruto o con el neto. «Detalle» verifica que las líneas de servicios y farmacia sumen el bruto.</p>
+      <div id="tdOrphans" class="is-hidden bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-900"></div>
     </div>
   </div>
 </section>
@@ -716,7 +753,7 @@ function bindDrop(zone, input, onFiles, extraInputs = []) {
 // ---------- Navegación por pestañas ----------
 function switchTab(id) {
   $$('.tab').forEach(t => t.setAttribute('aria-selected', String(t.dataset.tab === id)));
-  ['facturas', 'unir', 'dividir'].forEach(t => show($('#pane-' + t), t === id));
+  ['facturas', 'unir', 'dividir', 'tedef'].forEach(t => show($('#pane-' + t), t === id));
   store.set('tab', id);
 }
 $$('.tab').forEach(t => t.addEventListener('click', () => switchTab(t.dataset.tab)));
@@ -1186,6 +1223,7 @@ function renderResults() {
   show($('#btnDlExcel'), o.extract && rows.length > 0); show($('#btnCopy'), o.extract && rows.length > 0);
   show($('#dataWrap'), o.extract && rows.length > 0);
   if (o.extract) { renderTable(); updateTotals(); }
+  if (typeof tdRender === 'function' && TD.invs.length) tdRender();
   $('#resFact').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 function flagsHtml(r) { const f = computeFlags(r); return f.length ? f.map(([t, l]) => `<span class="badge ${l === 'bad' ? 'b-bad' : 'b-warn'}" title="${esc(t)}">${esc(t)}</span>`).join(' ') : '<span class="badge b-ok">✔ OK</span>'; }
@@ -1427,6 +1465,97 @@ $('#btnDelete').onclick = () => withSplit(async () => {
   progSplit.set(50, 'Generando PDF…'); await tick();
   download(pdfBlob(await (await subsetDoc(sp.lib, keep)).save()), `${sp.base}_sin_paginas.pdf`); toast(`${del.size} página(s) eliminada(s)`, 'ok');
 });
+
+
+/* =====================================================================
+   PESTAÑA 4 · CRUCE CON TRAMA TEDEF (formato de ancho fijo, archivos dfac/dser/dfar)
+   ===================================================================== */
+const TD = { invs: [], names: [] };
+const tdNum = l => (l.match(/\d+\.\d\d/g) || []).map(Number);
+const tdKey = (serie, num) => `${String(serie).toUpperCase()}-${parseInt(num, 10)}`;
+const tdDate = d => d && d.length === 8 ? `${d.slice(6, 8)}/${d.slice(4, 6)}/${d.slice(0, 4)}` : '';
+const r2 = n => Math.round(n * 100) / 100;
+async function tdRead(file) {                                          // .S01 / .zip (ZIP con otra extensión) o .txt suelto
+  const buf = await file.arrayBuffer(), u8 = new Uint8Array(buf), dec = new TextDecoder('latin1');
+  if (u8[0] === 0x50 && u8[1] === 0x4B) {
+    const zip = await JSZip.loadAsync(buf), out = [];
+    for (const e of Object.values(zip.files)) if (!e.dir) out.push({ name: e.name.split('/').pop(), text: dec.decode(await e.async('uint8array')) });
+    return out;
+  }
+  return [{ name: file.name, text: dec.decode(u8) }];
+}
+function tdParse(entries, source) {
+  const by = p => entries.filter(e => new RegExp('^' + p + '[_.]', 'i').test(e.name)).flatMap(e => e.text.split(/\r?\n/).filter(l => l.trim()));
+  const fac = by('dfac'), ser = by('dser'), far = by('dfar'), invs = new Map();
+  const head = /^(\d{14})(\d{7})(\d{5})(\d{11})(\d{8})(\d{2})([A-Z0-9]{4})(\d{8})(\d{8})/;
+  for (const l of fac) {
+    const m = head.exec(l); if (!m) continue; const a = tdNum(l.slice(72));
+    const k = m[4] + m[6] + m[7] + m[8];
+    invs.set(k, { fuente: source, ruc: m[4], codIpress: m[5], tipo: m[6], serie: m[7], numero: m[8], key: tdKey(m[7], m[8]), fecha: tdDate(m[9]),
+      bruto: a[1] ?? null, copFijo: a[3] ?? null, copVar: a[5] ?? null, neto: a[8] ?? null, nServ: 0, nFarm: 0, sumServ: 0, sumFarm: 0 });
+  }
+  const pref = /^(\d{11})(\d{8})(\d{2})([A-Z0-9]{4})(\d{8})/;
+  for (const l of ser) { const m = pref.exec(l), i = m && invs.get(m[1] + m[3] + m[4] + m[5]); if (i) { i.nServ++; i.sumServ += tdNum(l.slice(33))[3] || 0; } }
+  for (const l of far) { const m = pref.exec(l), i = m && invs.get(m[1] + m[3] + m[4] + m[5]); if (i) { i.nFarm++; i.sumFarm += tdNum(l.slice(33))[3] || 0; } }
+  return [...invs.values()].map(i => ({ ...i, sumServ: r2(i.sumServ), sumFarm: r2(i.sumFarm), sumDetalle: r2(i.sumServ + i.sumFarm) }));
+}
+async function tdAdd(files) {
+  const msg = $('#tdMsg'); let added = 0, bad = [];
+  for (const f of files) {
+    try {
+      const invs = tdParse(await tdRead(f), f.name);
+      if (!invs.length) { bad.push(f.name); continue; }
+      TD.invs = TD.invs.filter(x => !invs.some(n => n.key === x.key && n.ruc === x.ruc)).concat(invs); added += invs.length;
+    } catch (e) { bad.push(f.name); }
+  }
+  show(msg, bad.length > 0);
+  msg.className = 'bg-red-50 border border-red-200 rounded-xl p-3 text-xs text-red-800' + (bad.length ? '' : ' is-hidden');
+  msg.innerHTML = bad.length ? `No pude leer facturas en: <b>${bad.map(esc).join(', ')}</b>. Debe ser la trama TEDEF (ZIP/.S01 con los archivos <code>dfac_…</code>, <code>dser_…</code>, <code>dfar_…</code>).` : '';
+  if (added) toast(`${added} factura(s) leída(s) de la trama`, 'ok');
+  tdRender();
+}
+function tdCheck(inv) {
+  const out = { pdf: null, res: [], lvl: 'gray' };
+  const detOk = inv.bruto != null && Math.abs(inv.sumDetalle - inv.bruto) <= 0.05;
+  out.det = inv.nServ + inv.nFarm === 0 ? ['Sin detalle', 'b-gray'] : detOk ? [`✔ ${inv.nServ + inv.nFarm} líneas = ${fmtMoney(inv.sumDetalle)}`, 'b-ok'] : [`⚠ detalle ${fmtMoney(inv.sumDetalle)} ≠ bruto`, 'b-warn'];
+  const rows = (batch?.items || []).filter(i => i.row);
+  if (!rows.length) { out.res = [['Procesa los PDFs en la pestaña 1 (con «Extraer datos»)', 'b-gray']]; return out; }
+  const hit = rows.find(i => i.row.serie && /^[A-Z0-9]{4}-\d+$/i.test(i.row.serie) && tdKey(...i.row.serie.split('-')) === inv.key);
+  if (!hit) { out.res = [['✖ No hay PDF con esta serie-número', 'b-bad']]; out.lvl = 'bad'; return out; }
+  const r = hit.row; out.pdf = hit.name; let warn = false;
+  const t = r.total;
+  if (t == null) { out.res.push(['⚠ PDF sin total', 'b-warn']); warn = true; }
+  else if (inv.neto != null && Math.abs(t - inv.neto) <= 0.02) out.res.push([`✔ total PDF = neto (${fmtMoney(t)})`, 'b-ok']);
+  else if (inv.bruto != null && Math.abs(t - inv.bruto) <= 0.02) out.res.push([`✔ total PDF = bruto (${fmtMoney(t)})`, 'b-ok']);
+  else { out.res.push([`⚠ total PDF ${fmtMoney(t)} ≠ neto ${fmtMoney(inv.neto)} / bruto ${fmtMoney(inv.bruto)}`, 'b-warn']); warn = true; }
+  if (r.ruc && r.ruc !== inv.ruc) { out.res.push([`⚠ RUC PDF ${r.ruc} ≠ ${inv.ruc}`, 'b-warn']); warn = true; }
+  if (r.fecha && inv.fecha && r.fecha !== inv.fecha) { out.res.push([`⚠ fecha PDF ${r.fecha} ≠ ${inv.fecha}`, 'b-warn']); warn = true; }
+  out.lvl = warn ? 'warn' : 'ok'; return out;
+}
+function tdRender() {
+  show($('#tdWrap'), TD.invs.length > 0); if (!TD.invs.length) return;
+  const checks = TD.invs.map(tdCheck); TD.checks = checks;
+  $('#tdBody').innerHTML = TD.invs.map((i, n) => { const c = checks[n]; return `<tr class="${c.lvl === 'bad' ? 'has-bad' : c.lvl === 'warn' ? 'has-warn' : ''}">
+    <td class="px-2 font-bold mono">${esc(i.serie)}-${esc(String(parseInt(i.numero, 10)))}</td><td class="px-2">${esc(i.fecha)}</td><td class="px-2 mono">${esc(i.ruc)}</td>
+    <td class="px-2 num">${fmtMoney(i.bruto)}</td><td class="px-2 num">${fmtMoney(i.copFijo)}</td><td class="px-2 num">${fmtMoney(i.copVar)}</td><td class="px-2 num font-bold">${fmtMoney(i.neto)}</td>
+    <td class="px-2"><span class="badge ${c.det[1]}">${esc(c.det[0])}</span></td>
+    <td class="px-2 max-w-[12rem]"><div class="truncate" title="${esc(c.pdf || '')}">${esc(c.pdf || '—')}</div></td>
+    <td class="px-2"><div class="flex flex-wrap gap-1">${c.res.map(([t, k]) => `<span class="badge ${k}">${esc(t)}</span>`).join('')}</div></td></tr>`; }).join('');
+  const ok = checks.filter(c => c.lvl === 'ok').length, warn = checks.filter(c => c.lvl === 'warn').length, bad = checks.filter(c => c.lvl === 'bad').length, pend = checks.filter(c => c.lvl === 'gray').length;
+  $('#tdStats').innerHTML = statChip(`${TD.invs.length} en trama`, 'b-blue') + (ok ? statChip(`✔ ${ok} coinciden`, 'b-ok') : '') + (warn ? statChip(`⚠ ${warn} con diferencias`, 'b-warn') : '') + (bad ? statChip(`✖ ${bad} sin PDF`, 'b-bad') : '') + (pend ? statChip(`${pend} sin PDFs cargados`, 'b-gray') : '');
+  const keys = new Set(TD.invs.map(i => i.key)), orph = (batch?.items || []).filter(i => i.row && i.row.serie && /^[A-Z0-9]{4}-\d+$/i.test(i.row.serie) && !keys.has(tdKey(...i.row.serie.split('-'))));
+  const ob = $('#tdOrphans'); show(ob, orph.length > 0 && !pend);
+  ob.innerHTML = orph.length ? `<b>PDFs que no están en la trama (${orph.length}):</b> ${orph.map(i => esc(i.name) + ' (' + esc(i.row.serie) + ')').join(' · ')}` : '';
+}
+bindDrop($('#dzTedef'), $('#inTedef'), f => tdAdd(f));
+$('#tdClear').onclick = () => { TD.invs = []; tdRender(); };
+$('#tdRecheck').onclick = () => { tdRender(); toast('Cruce actualizado', 'ok'); };
+$('#tdExcel').onclick = () => {
+  const head = ['Serie-Número', 'Fecha', 'RUC IPRESS', 'Total bruto', 'Copago fijo', 'Copago variable', 'Neto IAFAS', 'Líneas servicios', 'Líneas farmacia', 'Suma detalle', 'PDF', 'Resultado', 'Trama'];
+  const rows = TD.invs.map((i, n) => [`${i.serie}-${parseInt(i.numero, 10)}`, i.fecha, i.ruc, i.bruto, i.copFijo, i.copVar, i.neto, i.nServ, i.nFarm, i.sumDetalle, TD.checks[n].pdf || '', TD.checks[n].res.map(r => r[0]).join('; '), i.fuente]);
+  const ws = XLSX.utils.aoa_to_sheet([head, ...rows]); ws['!cols'] = [16, 11, 14, 12, 12, 14, 12, 10, 10, 12, 34, 60, 40].map(w => ({ wch: w }));
+  const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Cruce TEDEF'); XLSX.writeFile(wb, `Cruce_TEDEF_${new Date().toISOString().slice(0, 10)}.xlsx`);
+};
 
 /* =====================================================================
    IA · modal de configuración
