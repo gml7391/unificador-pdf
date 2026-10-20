@@ -184,7 +184,7 @@
         <button type="button" class="btn btn-ghost btn-sm" id="btnPickFact">📄 Elegir archivos</button>
         <button type="button" class="btn btn-ghost btn-sm" id="btnPickFolderFact">📂 Elegir carpeta</button>
       </div>
-      <input type="file" id="inFact" multiple accept="application/pdf,.pdf" class="is-hidden">
+      <input type="file" id="inFact" multiple accept="application/pdf,.pdf,.xml,text/xml" class="is-hidden">
       <input type="file" id="inFactFolder" webkitdirectory multiple class="is-hidden">
     </div>
 
@@ -395,24 +395,24 @@
 <section id="pane-tedef" class="space-y-5 is-hidden" role="tabpanel">
   <div class="card p-5">
     <h2 class="text-lg font-bold">Cruce con trama TEDEF</h2>
-    <p class="text-sm text-slate-600 mt-1">Sube la trama que envía la aseguradora (<code>.S01</code>, un ZIP, o los <code>.txt</code> sueltos). La app lee cada factura de la trama y la <b>compara con tus PDFs</b> ya procesados en la pestaña 1: serie-número, RUC, fecha e importe.</p>
+    <p class="text-sm text-slate-600 mt-1">Sube la trama que envía la aseguradora (<code>.S01</code>, un ZIP, o los <code>.txt</code> sueltos) y/o los <b>XML de factura electrónica</b> (SUNAT/UBL, sueltos o en ZIP). La app los <b>cruza entre sí y con tus PDFs</b> ya procesados en la pestaña 1: serie-número, RUC, fecha e importe.</p>
   </div>
   <div class="card p-5 space-y-4">
     <div id="dzTedef" class="dz" tabindex="0" role="button" aria-label="Seleccionar trama TEDEF">
-      <p class="text-sm font-bold text-slate-700">Arrastra aquí la trama (.S01, .zip o .txt)</p>
-      <p class="text-xs text-slate-500 mt-1">puedes subir varias tramas a la vez</p>
+      <p class="text-sm font-bold text-slate-700">Arrastra aquí la trama (.S01, .zip, .txt) y/o los XML de factura</p>
+      <p class="text-xs text-slate-500 mt-1">puedes mezclar todo y subir varios archivos a la vez</p>
       <input type="file" id="inTedef" multiple class="is-hidden">
     </div>
     <div id="tdMsg" class="is-hidden"></div>
-    <div id="tdWrap" class="is-hidden space-y-3">
-      <div class="flex flex-wrap items-center justify-between gap-2">
-        <div id="tdStats" class="flex flex-wrap gap-2 text-xs"></div>
-        <div class="flex gap-2">
-          <button id="tdRecheck" class="btn btn-ghost btn-sm">🔄 Volver a cruzar</button>
-          <button id="tdExcel" class="btn btn-teal btn-sm">📊 Excel</button>
-          <button id="tdClear" class="btn btn-danger btn-sm">Vaciar</button>
-        </div>
+    <div id="tdBar" class="is-hidden flex flex-wrap items-center justify-between gap-2">
+      <div id="tdStats" class="flex flex-wrap gap-2 text-xs"></div>
+      <div class="flex gap-2">
+        <button id="tdRecheck" class="btn btn-ghost btn-sm">🔄 Volver a cruzar</button>
+        <button id="tdExcel" class="btn btn-teal btn-sm">📊 Excel</button>
+        <button id="tdClear" class="btn btn-danger btn-sm">Vaciar</button>
       </div>
+    </div>
+    <div id="tdWrap" class="is-hidden space-y-3">
       <div class="overflow-auto max-h-[30rem] custom-scroll border border-slate-200 rounded-xl">
         <table class="dt">
           <thead><tr><th>Serie-Número</th><th>Fecha</th><th>RUC IPRESS</th><th class="text-right">Total bruto</th><th class="text-right">Copago fijo</th><th class="text-right">Copago var.</th><th class="text-right">Neto IAFAS</th><th>Detalle</th><th>PDF</th><th>Resultado del cruce</th></tr></thead>
@@ -420,7 +420,16 @@
         </table>
       </div>
       <p class="hint">Interpretación de importes (deducida del formato): <b>Total bruto</b> = suma de servicios + farmacia; <b>Neto IAFAS</b> = bruto − copago fijo − copago variable. El total del PDF se acepta si coincide con el bruto o con el neto. «Detalle» verifica que las líneas de servicios y farmacia sumen el bruto.</p>
-      <div id="tdOrphans" class="is-hidden bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-900"></div>
+    </div>
+    <div id="tdOrphans" class="is-hidden bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-900"></div>
+    <div id="xmlWrap" class="is-hidden space-y-2">
+      <h3 class="text-xs font-bold text-slate-700 uppercase tracking-wide">Comprobantes XML (SUNAT/UBL)</h3>
+      <div class="overflow-auto max-h-[24rem] custom-scroll border border-slate-200 rounded-xl">
+        <table class="dt">
+          <thead><tr><th>Serie-Número</th><th>Tipo</th><th>Fecha</th><th>RUC emisor</th><th>Razón social</th><th>Cliente</th><th>Mon.</th><th class="text-right">Total (bruto)</th><th class="text-right">Anticipos</th><th class="text-right">A pagar</th><th>Detalle</th><th>Cruce</th></tr></thead>
+          <tbody id="xmlBody"></tbody>
+        </table>
+      </div>
     </div>
   </div>
 </section>
@@ -1072,7 +1081,11 @@ const qFact = new FileQueue({
   onPreview: (it, p) => openPreview(it.file, p),
   onChange: q => { const b = $('#btnProcess'); b.disabled = busyFact || q.items.length === 0; b.textContent = q.items.length ? `⚡ Extraer 1ª página de ${q.items.length} PDF${q.items.length > 1 ? 's' : ''}` : '⚡ Extraer 1ª página'; },
 });
-bindDrop($('#dzFact'), $('#inFact'), f => qFact.add(f), [$('#inFactFolder')]);
+bindDrop($('#dzFact'), $('#inFact'), f => {
+  const xml = f.filter(x => /\.xml$/i.test(x.name));                    // los XML de factura se leen en la pestaña de cruce
+  if (xml.length) { tdAdd(xml); toast(`${xml.length} XML enviado(s) a «Cruce con trama TEDEF»`, 'info', 5000); }
+  qFact.add(f.filter(x => !/\.xml$/i.test(x.name)));
+}, [$('#inFactFolder')]);
 $('#btnPickFact').onclick = () => $('#inFact').click();
 $('#btnPickFolderFact').onclick = () => $('#inFactFolder').click();
 $('#btnClearFact').onclick = () => qFact.clear();
@@ -1470,19 +1483,22 @@ $('#btnDelete').onclick = () => withSplit(async () => {
 /* =====================================================================
    PESTAÑA 4 · CRUCE CON TRAMA TEDEF (formato de ancho fijo, archivos dfac/dser/dfar)
    ===================================================================== */
-const TD = { invs: [], names: [] };
+const TD = { invs: [], xml: [], checks: [], xchecks: [] };
 const tdNum = l => (l.match(/\d+\.\d\d/g) || []).map(Number);
 const tdKey = (serie, num) => `${String(serie).toUpperCase()}-${parseInt(num, 10)}`;
 const tdDate = d => d && d.length === 8 ? `${d.slice(6, 8)}/${d.slice(4, 6)}/${d.slice(0, 4)}` : '';
 const r2 = n => Math.round(n * 100) / 100;
-async function tdRead(file) {                                          // .S01 / .zip (ZIP con otra extensión) o .txt suelto
-  const buf = await file.arrayBuffer(), u8 = new Uint8Array(buf), dec = new TextDecoder('latin1');
+const SERIE_RE = /^[A-Z0-9]{4}-\d+$/i;
+const keyOfRow = r => r && r.serie && SERIE_RE.test(r.serie) ? tdKey(...r.serie.split('-')) : '';
+async function tdRead(file) {                                          // .S01 / .zip (ZIP con otra extensión), .txt o .xml sueltos
+  const buf = await file.arrayBuffer(), u8 = new Uint8Array(buf), latin = new TextDecoder('latin1'), utf = new TextDecoder('utf-8');
+  const dec = (name, bytes) => (/\.xml$/i.test(name) ? utf : latin).decode(bytes);
   if (u8[0] === 0x50 && u8[1] === 0x4B) {
     const zip = await JSZip.loadAsync(buf), out = [];
-    for (const e of Object.values(zip.files)) if (!e.dir) out.push({ name: e.name.split('/').pop(), text: dec.decode(await e.async('uint8array')) });
+    for (const e of Object.values(zip.files)) if (!e.dir) out.push({ name: e.name.split('/').pop(), text: dec(e.name, await e.async('uint8array')) });
     return out;
   }
-  return [{ name: file.name, text: dec.decode(u8) }];
+  return [{ name: file.name, text: dec(file.name, u8) }];
 }
 function tdParse(entries, source) {
   const by = p => entries.filter(e => new RegExp('^' + p + '[_.]', 'i').test(e.name)).flatMap(e => e.text.split(/\r?\n/).filter(l => l.trim()));
@@ -1490,8 +1506,7 @@ function tdParse(entries, source) {
   const head = /^(\d{14})(\d{7})(\d{5})(\d{11})(\d{8})(\d{2})([A-Z0-9]{4})(\d{8})(\d{8})/;
   for (const l of fac) {
     const m = head.exec(l); if (!m) continue; const a = tdNum(l.slice(72));
-    const k = m[4] + m[6] + m[7] + m[8];
-    invs.set(k, { fuente: source, ruc: m[4], codIpress: m[5], tipo: m[6], serie: m[7], numero: m[8], key: tdKey(m[7], m[8]), fecha: tdDate(m[9]),
+    invs.set(m[4] + m[6] + m[7] + m[8], { fuente: source, ruc: m[4], codIpress: m[5], tipo: m[6], serie: m[7], numero: m[8], key: tdKey(m[7], m[8]), fecha: tdDate(m[9]),
       bruto: a[1] ?? null, copFijo: a[3] ?? null, copVar: a[5] ?? null, neto: a[8] ?? null, nServ: 0, nFarm: 0, sumServ: 0, sumFarm: 0 });
   }
   const pref = /^(\d{11})(\d{8})(\d{2})([A-Z0-9]{4})(\d{8})/;
@@ -1499,62 +1514,133 @@ function tdParse(entries, source) {
   for (const l of far) { const m = pref.exec(l), i = m && invs.get(m[1] + m[3] + m[4] + m[5]); if (i) { i.nFarm++; i.sumFarm += tdNum(l.slice(33))[3] || 0; } }
   return [...invs.values()].map(i => ({ ...i, sumServ: r2(i.sumServ), sumFarm: r2(i.sumFarm), sumDetalle: r2(i.sumServ + i.sumFarm) }));
 }
+
+/* --- XML de factura electrónica SUNAT (UBL 2.1): se leen por nombre local, sin depender del prefijo --- */
+const kids = (el, n) => el ? [...el.children].filter(c => c.localName === n) : [];
+const kid = (el, n) => kids(el, n)[0];
+const xt = (el, ...path) => { let c = el; for (const n of path) c = kid(c, n); return c ? c.textContent.trim() : ''; };
+function ublParse(text, fuente) {
+  const doc = new DOMParser().parseFromString(text.replace(/^﻿/, ''), 'application/xml'); if (doc.querySelector('parsererror')) return null;
+  const root = doc.documentElement; if (!/^(Invoice|CreditNote|DebitNote)$/.test(root.localName)) return null;
+  const m = /^([A-Z0-9]{4})-(\d+)$/i.exec(xt(root, 'ID')); if (!m) return null;
+  const sup = kid(kid(root, 'AccountingSupplierParty'), 'Party'), cus = kid(kid(root, 'AccountingCustomerParty'), 'Party'), lm = kid(root, 'LegalMonetaryTotal');
+  const num = (el, n) => { const v = parseFloat(xt(el, n)); return isNaN(v) ? null : v; };
+  const lines = [...kids(root, 'InvoiceLine'), ...kids(root, 'CreditNoteLine'), ...kids(root, 'DebitNoteLine')];
+  const code = xt(root, 'InvoiceTypeCode'), f = xt(root, 'IssueDate').split('-');
+  const bruto = num(lm, 'TaxInclusiveAmount') ?? num(lm, 'LineExtensionAmount'), prepaid = num(lm, 'PrepaidAmount') || 0;
+  return { fuente, serie: m[1].toUpperCase(), numero: m[2], key: tdKey(m[1], m[2]), fecha: f.length === 3 ? `${f[2]}/${f[1]}/${f[0]}` : '',
+    tipo: root.localName === 'CreditNote' ? 'Nota de crédito' : root.localName === 'DebitNote' ? 'Nota de débito' : code === '03' ? 'Boleta' : 'Factura',
+    ruc: xt(sup, 'PartyIdentification', 'ID'), razon: xt(sup, 'PartyLegalEntity', 'RegistrationName') || xt(sup, 'PartyName', 'Name'),
+    rucCli: xt(cus, 'PartyIdentification', 'ID'), cliente: xt(cus, 'PartyLegalEntity', 'RegistrationName'), moneda: xt(root, 'DocumentCurrencyCode') || 'PEN',
+    bruto, anticipos: prepaid, neto: num(lm, 'PayableAmount'), igv: num(kid(root, 'TaxTotal'), 'TaxAmount'),
+    nLineas: lines.length, sumLineas: r2(lines.reduce((t, l) => t + (num(l, 'LineExtensionAmount') || 0), 0)), subtotal: num(lm, 'LineExtensionAmount'),
+    firmado: doc.getElementsByTagNameNS('http://www.w3.org/2000/09/xmldsig#', 'Signature').length > 0 };
+}
+
 async function tdAdd(files) {
-  const msg = $('#tdMsg'); let added = 0, bad = [];
+  const msg = $('#tdMsg'); let nT = 0, nX = 0, bad = [];
   for (const f of files) {
     try {
-      const invs = tdParse(await tdRead(f), f.name);
-      if (!invs.length) { bad.push(f.name); continue; }
-      TD.invs = TD.invs.filter(x => !invs.some(n => n.key === x.key && n.ruc === x.ruc)).concat(invs); added += invs.length;
+      const entries = await tdRead(f);
+      const invs = tdParse(entries, f.name);
+      const xmls = entries.filter(e => /\.xml$/i.test(e.name)).map(e => ublParse(e.text, e.name)).filter(Boolean);
+      if (!invs.length && !xmls.length) { bad.push(f.name); continue; }
+      TD.invs = TD.invs.filter(x => !invs.some(n => n.key === x.key && n.ruc === x.ruc)).concat(invs); nT += invs.length;
+      TD.xml = TD.xml.filter(x => !xmls.some(n => n.key === x.key && n.ruc === x.ruc)).concat(xmls); nX += xmls.length;
     } catch (e) { bad.push(f.name); }
   }
-  show(msg, bad.length > 0);
-  msg.className = 'bg-red-50 border border-red-200 rounded-xl p-3 text-xs text-red-800' + (bad.length ? '' : ' is-hidden');
-  msg.innerHTML = bad.length ? `No pude leer facturas en: <b>${bad.map(esc).join(', ')}</b>. Debe ser la trama TEDEF (ZIP/.S01 con los archivos <code>dfac_…</code>, <code>dser_…</code>, <code>dfar_…</code>).` : '';
-  if (added) toast(`${added} factura(s) leída(s) de la trama`, 'ok');
+  msg.className = bad.length ? 'bg-red-50 border border-red-200 rounded-xl p-3 text-xs text-red-800' : 'is-hidden';
+  msg.innerHTML = bad.length ? `No pude leer comprobantes en: <b>${bad.map(esc).join(', ')}</b>. Debe ser la trama TEDEF (ZIP/.S01 con <code>dfac_…</code>, <code>dser_…</code>, <code>dfar_…</code>) o un XML de factura electrónica SUNAT.` : '';
+  if (nT || nX) toast([nT && `${nT} factura(s) de la trama`, nX && `${nX} XML`].filter(Boolean).join(' · ') + ' leídos', 'ok');
   tdRender();
 }
+
+const tdBadge = (txt, k) => [txt, k];
+function cmpAmounts(label, src, inv, res) {                              // compara bruto/neto de una fuente contra la trama
+  const eq = (a, b) => a != null && b != null && Math.abs(a - b) <= 0.02;
+  if (eq(src.bruto, inv.bruto) && eq(src.neto, inv.neto)) res.push([`✔ ${label}: bruto y neto = trama`, 'b-ok']);
+  else if (eq(src.bruto, inv.bruto)) res.push([`✔ ${label}: bruto = trama`, 'b-ok']);
+  else if (eq(src.neto, inv.neto)) res.push([`✔ ${label}: neto = trama`, 'b-ok']);
+  else { res.push([`⚠ ${label}: ${fmtMoney(src.bruto)} / ${fmtMoney(src.neto)} ≠ trama ${fmtMoney(inv.bruto)} / ${fmtMoney(inv.neto)}`, 'b-warn']); return true; }
+  return false;
+}
 function tdCheck(inv) {
-  const out = { pdf: null, res: [], lvl: 'gray' };
+  const out = { pdf: null, xml: null, res: [], lvl: 'gray' }; let warn = false, any = false;
   const detOk = inv.bruto != null && Math.abs(inv.sumDetalle - inv.bruto) <= 0.05;
   out.det = inv.nServ + inv.nFarm === 0 ? ['Sin detalle', 'b-gray'] : detOk ? [`✔ ${inv.nServ + inv.nFarm} líneas = ${fmtMoney(inv.sumDetalle)}`, 'b-ok'] : [`⚠ detalle ${fmtMoney(inv.sumDetalle)} ≠ bruto`, 'b-warn'];
+  const x = TD.xml.find(v => v.key === inv.key);
+  if (x) {
+    any = true; out.xml = x.fuente;
+    if (cmpAmounts('XML', x, inv, out.res)) warn = true;
+    if (x.ruc && x.ruc !== inv.ruc) { out.res.push([`⚠ RUC XML ${x.ruc} ≠ ${inv.ruc}`, 'b-warn']); warn = true; }
+    if (x.fecha && inv.fecha && x.fecha !== inv.fecha) { out.res.push([`⚠ fecha XML ${x.fecha} ≠ ${inv.fecha}`, 'b-warn']); warn = true; }
+  }
   const rows = (batch?.items || []).filter(i => i.row);
-  if (!rows.length) { out.res = [['Procesa los PDFs en la pestaña 1 (con «Extraer datos»)', 'b-gray']]; return out; }
-  const hit = rows.find(i => i.row.serie && /^[A-Z0-9]{4}-\d+$/i.test(i.row.serie) && tdKey(...i.row.serie.split('-')) === inv.key);
-  if (!hit) { out.res = [['✖ No hay PDF con esta serie-número', 'b-bad']]; out.lvl = 'bad'; return out; }
-  const r = hit.row; out.pdf = hit.name; let warn = false;
-  const t = r.total;
-  if (t == null) { out.res.push(['⚠ PDF sin total', 'b-warn']); warn = true; }
-  else if (inv.neto != null && Math.abs(t - inv.neto) <= 0.02) out.res.push([`✔ total PDF = neto (${fmtMoney(t)})`, 'b-ok']);
-  else if (inv.bruto != null && Math.abs(t - inv.bruto) <= 0.02) out.res.push([`✔ total PDF = bruto (${fmtMoney(t)})`, 'b-ok']);
-  else { out.res.push([`⚠ total PDF ${fmtMoney(t)} ≠ neto ${fmtMoney(inv.neto)} / bruto ${fmtMoney(inv.bruto)}`, 'b-warn']); warn = true; }
-  if (r.ruc && r.ruc !== inv.ruc) { out.res.push([`⚠ RUC PDF ${r.ruc} ≠ ${inv.ruc}`, 'b-warn']); warn = true; }
-  if (r.fecha && inv.fecha && r.fecha !== inv.fecha) { out.res.push([`⚠ fecha PDF ${r.fecha} ≠ ${inv.fecha}`, 'b-warn']); warn = true; }
-  out.lvl = warn ? 'warn' : 'ok'; return out;
+  const hit = rows.find(i => keyOfRow(i.row) === inv.key);
+  if (hit) {
+    any = true; const r = hit.row; out.pdf = hit.name; const t = r.total;
+    if (t == null) { out.res.push(['⚠ PDF sin total', 'b-warn']); warn = true; }
+    else if (inv.neto != null && Math.abs(t - inv.neto) <= 0.02) out.res.push([`✔ total PDF = neto (${fmtMoney(t)})`, 'b-ok']);
+    else if (inv.bruto != null && Math.abs(t - inv.bruto) <= 0.02) out.res.push([`✔ total PDF = bruto (${fmtMoney(t)})`, 'b-ok']);
+    else { out.res.push([`⚠ total PDF ${fmtMoney(t)} ≠ neto ${fmtMoney(inv.neto)} / bruto ${fmtMoney(inv.bruto)}`, 'b-warn']); warn = true; }
+    if (r.ruc && r.ruc !== inv.ruc) { out.res.push([`⚠ RUC PDF ${r.ruc} ≠ ${inv.ruc}`, 'b-warn']); warn = true; }
+    if (r.fecha && inv.fecha && r.fecha !== inv.fecha) { out.res.push([`⚠ fecha PDF ${r.fecha} ≠ ${inv.fecha}`, 'b-warn']); warn = true; }
+  }
+  if (!any) { out.res = [[rows.length || TD.xml.length ? '✖ Sin PDF ni XML con esta serie-número' : 'Sube los XML o procesa los PDFs (pestaña 1, con «Extraer datos»)', rows.length || TD.xml.length ? 'b-bad' : 'b-gray']]; out.lvl = rows.length || TD.xml.length ? 'bad' : 'gray'; }
+  else out.lvl = warn ? 'warn' : 'ok';
+  return out;
+}
+function xmlCheck(x) {                                                  // XML frente a trama y PDF
+  const res = []; let warn = false; const inv = TD.invs.find(i => i.key === x.key);
+  if (TD.invs.length) res.push(inv ? ['✔ en la trama', 'b-ok'] : ['✖ no está en la trama', 'b-bad']);
+  if (inv) { /* los importes ya se comparan en la fila de la trama */ }
+  const hit = (batch?.items || []).find(i => i.row && keyOfRow(i.row) === x.key);
+  if (hit) { const t = hit.row.total, ok = t != null && ([x.neto, x.bruto].some(v => v != null && Math.abs(v - t) <= 0.02)); res.push(ok ? [`✔ PDF total ${fmtMoney(t)}`, 'b-ok'] : [`⚠ PDF total ${fmtMoney(t)} ≠ XML`, 'b-warn']); if (!ok) warn = true; }
+  const det = x.nLineas === 0 ? ['Sin líneas', 'b-gray'] : x.subtotal != null && Math.abs(x.sumLineas - x.subtotal) <= 0.05 ? [`✔ ${x.nLineas} líneas = ${fmtMoney(x.sumLineas)}`, 'b-ok'] : [`⚠ líneas ${fmtMoney(x.sumLineas)} ≠ ${fmtMoney(x.subtotal)}`, 'b-warn'];
+  if (det[1] === 'b-warn') warn = true;
+  return { res, det, lvl: res.some(r => r[1] === 'b-bad') ? 'bad' : warn ? 'warn' : 'ok' };
 }
 function tdRender() {
-  show($('#tdWrap'), TD.invs.length > 0); if (!TD.invs.length) return;
-  const checks = TD.invs.map(tdCheck); TD.checks = checks;
+  const has = TD.invs.length > 0, hasX = TD.xml.length > 0;
+  show($('#tdWrap'), has); show($('#xmlWrap'), hasX); show($('#tdBar'), has || hasX);
+  if (!has && !hasX) return;
+  const checks = TD.checks = TD.invs.map(tdCheck);
   $('#tdBody').innerHTML = TD.invs.map((i, n) => { const c = checks[n]; return `<tr class="${c.lvl === 'bad' ? 'has-bad' : c.lvl === 'warn' ? 'has-warn' : ''}">
     <td class="px-2 font-bold mono">${esc(i.serie)}-${esc(String(parseInt(i.numero, 10)))}</td><td class="px-2">${esc(i.fecha)}</td><td class="px-2 mono">${esc(i.ruc)}</td>
     <td class="px-2 num">${fmtMoney(i.bruto)}</td><td class="px-2 num">${fmtMoney(i.copFijo)}</td><td class="px-2 num">${fmtMoney(i.copVar)}</td><td class="px-2 num font-bold">${fmtMoney(i.neto)}</td>
     <td class="px-2"><span class="badge ${c.det[1]}">${esc(c.det[0])}</span></td>
-    <td class="px-2 max-w-[12rem]"><div class="truncate" title="${esc(c.pdf || '')}">${esc(c.pdf || '—')}</div></td>
+    <td class="px-2 max-w-[12rem]"><div class="truncate" title="${esc([c.pdf, c.xml].filter(Boolean).join(' · '))}">${esc([c.pdf && 'PDF', c.xml && 'XML'].filter(Boolean).join(' + ') || '—')}</div></td>
     <td class="px-2"><div class="flex flex-wrap gap-1">${c.res.map(([t, k]) => `<span class="badge ${k}">${esc(t)}</span>`).join('')}</div></td></tr>`; }).join('');
-  const ok = checks.filter(c => c.lvl === 'ok').length, warn = checks.filter(c => c.lvl === 'warn').length, bad = checks.filter(c => c.lvl === 'bad').length, pend = checks.filter(c => c.lvl === 'gray').length;
-  $('#tdStats').innerHTML = statChip(`${TD.invs.length} en trama`, 'b-blue') + (ok ? statChip(`✔ ${ok} coinciden`, 'b-ok') : '') + (warn ? statChip(`⚠ ${warn} con diferencias`, 'b-warn') : '') + (bad ? statChip(`✖ ${bad} sin PDF`, 'b-bad') : '') + (pend ? statChip(`${pend} sin PDFs cargados`, 'b-gray') : '');
-  const keys = new Set(TD.invs.map(i => i.key)), orph = (batch?.items || []).filter(i => i.row && i.row.serie && /^[A-Z0-9]{4}-\d+$/i.test(i.row.serie) && !keys.has(tdKey(...i.row.serie.split('-'))));
-  const ob = $('#tdOrphans'); show(ob, orph.length > 0 && !pend);
-  ob.innerHTML = orph.length ? `<b>PDFs que no están en la trama (${orph.length}):</b> ${orph.map(i => esc(i.name) + ' (' + esc(i.row.serie) + ')').join(' · ')}` : '';
+  const xc = TD.xchecks = TD.xml.map(xmlCheck);
+  $('#xmlBody').innerHTML = TD.xml.map((x, n) => { const c = xc[n]; return `<tr class="${c.lvl === 'bad' ? 'has-bad' : c.lvl === 'warn' ? 'has-warn' : ''}">
+    <td class="px-2 font-bold mono">${esc(x.serie)}-${esc(String(parseInt(x.numero, 10)))}</td><td class="px-2">${esc(x.tipo)}</td><td class="px-2">${esc(x.fecha)}</td><td class="px-2 mono">${esc(x.ruc)}</td>
+    <td class="px-2 max-w-[16rem]"><div class="truncate" title="${esc(x.razon)}">${esc(x.razon)}</div></td><td class="px-2 max-w-[14rem]"><div class="truncate" title="${esc(x.rucCli + ' ' + x.cliente)}">${esc(x.cliente || x.rucCli)}</div></td>
+    <td class="px-2">${esc(x.moneda)}</td><td class="px-2 num">${fmtMoney(x.bruto)}</td><td class="px-2 num">${fmtMoney(x.anticipos)}</td><td class="px-2 num font-bold">${fmtMoney(x.neto)}</td>
+    <td class="px-2"><span class="badge ${c.det[1]}">${esc(c.det[0])}</span>${x.firmado ? '' : ' <span class="badge b-warn">sin firma</span>'}</td>
+    <td class="px-2"><div class="flex flex-wrap gap-1">${c.res.map(([t, k]) => `<span class="badge ${k}">${esc(t)}</span>`).join('') || '—'}</div></td></tr>`; }).join('');
+  const all = [...checks, ...xc], cnt = l => all.filter(c => c.lvl === l).length;
+  $('#tdStats').innerHTML = (has ? statChip(`${TD.invs.length} en trama`, 'b-blue') : '') + (hasX ? statChip(`${TD.xml.length} XML`, 'b-blue') : '') + (cnt('ok') ? statChip(`✔ ${cnt('ok')} coinciden`, 'b-ok') : '') + (cnt('warn') ? statChip(`⚠ ${cnt('warn')} con diferencias`, 'b-warn') : '') + (cnt('bad') ? statChip(`✖ ${cnt('bad')} sin pareja`, 'b-bad') : '') + (cnt('gray') ? statChip(`${cnt('gray')} pendientes`, 'b-gray') : '');
+  const keys = new Set([...TD.invs.map(i => i.key), ...TD.xml.map(x => x.key)]), orph = (batch?.items || []).filter(i => i.row && keyOfRow(i.row) && !keys.has(keyOfRow(i.row)));
+  const ob = $('#tdOrphans'); show(ob, orph.length > 0);
+  ob.innerHTML = orph.length ? `<b>PDFs que no están en la trama ni en los XML (${orph.length}):</b> ${orph.map(i => esc(i.name) + ' (' + esc(i.row.serie) + ')').join(' · ')}` : '';
 }
 bindDrop($('#dzTedef'), $('#inTedef'), f => tdAdd(f));
-$('#tdClear').onclick = () => { TD.invs = []; tdRender(); };
+$('#tdClear').onclick = () => { TD.invs = []; TD.xml = []; tdRender(); show($('#tdMsg'), false); };
 $('#tdRecheck').onclick = () => { tdRender(); toast('Cruce actualizado', 'ok'); };
 $('#tdExcel').onclick = () => {
-  const head = ['Serie-Número', 'Fecha', 'RUC IPRESS', 'Total bruto', 'Copago fijo', 'Copago variable', 'Neto IAFAS', 'Líneas servicios', 'Líneas farmacia', 'Suma detalle', 'PDF', 'Resultado', 'Trama'];
-  const rows = TD.invs.map((i, n) => [`${i.serie}-${parseInt(i.numero, 10)}`, i.fecha, i.ruc, i.bruto, i.copFijo, i.copVar, i.neto, i.nServ, i.nFarm, i.sumDetalle, TD.checks[n].pdf || '', TD.checks[n].res.map(r => r[0]).join('; '), i.fuente]);
-  const ws = XLSX.utils.aoa_to_sheet([head, ...rows]); ws['!cols'] = [16, 11, 14, 12, 12, 14, 12, 10, 10, 12, 34, 60, 40].map(w => ({ wch: w }));
-  const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Cruce TEDEF'); XLSX.writeFile(wb, `Cruce_TEDEF_${new Date().toISOString().slice(0, 10)}.xlsx`);
+  const wb = XLSX.utils.book_new();
+  if (TD.invs.length) {
+    const head = ['Serie-Número', 'Fecha', 'RUC IPRESS', 'Total bruto', 'Copago fijo', 'Copago variable', 'Neto IAFAS', 'Líneas servicios', 'Líneas farmacia', 'Suma detalle', 'PDF', 'XML', 'Resultado', 'Trama'];
+    const rows = TD.invs.map((i, n) => [`${i.serie}-${parseInt(i.numero, 10)}`, i.fecha, i.ruc, i.bruto, i.copFijo, i.copVar, i.neto, i.nServ, i.nFarm, i.sumDetalle, TD.checks[n].pdf || '', TD.checks[n].xml || '', TD.checks[n].res.map(r => r[0]).join('; '), i.fuente]);
+    const ws = XLSX.utils.aoa_to_sheet([head, ...rows]); ws['!cols'] = [16, 11, 14, 12, 12, 14, 12, 10, 10, 12, 30, 30, 60, 40].map(w => ({ wch: w })); XLSX.utils.book_append_sheet(wb, ws, 'Cruce TEDEF');
+  }
+  if (TD.xml.length) {
+    const head = ['Serie-Número', 'Tipo', 'Fecha', 'RUC emisor', 'Razón social', 'RUC cliente', 'Cliente', 'Moneda', 'Total (bruto)', 'Anticipos', 'A pagar', 'IGV', 'Líneas', 'Suma líneas', 'Firmado', 'Cruce', 'Archivo'];
+    const rows = TD.xml.map((x, n) => [`${x.serie}-${parseInt(x.numero, 10)}`, x.tipo, x.fecha, x.ruc, x.razon, x.rucCli, x.cliente, x.moneda, x.bruto, x.anticipos, x.neto, x.igv, x.nLineas, x.sumLineas, x.firmado ? 'Sí' : 'No', TD.xchecks[n].res.map(r => r[0]).join('; '), x.fuente]);
+    const ws = XLSX.utils.aoa_to_sheet([head, ...rows]); ws['!cols'] = [16, 10, 11, 14, 40, 14, 36, 8, 12, 11, 12, 10, 8, 12, 8, 40, 36].map(w => ({ wch: w })); XLSX.utils.book_append_sheet(wb, ws, 'XML');
+  }
+  if (!wb.SheetNames.length) return toast('No hay datos para exportar', 'warn');
+  XLSX.writeFile(wb, `Cruce_${new Date().toISOString().slice(0, 10)}.xlsx`);
 };
 
 /* =====================================================================
