@@ -91,6 +91,7 @@
   table.dt .cell[data-f=tipo] { min-width:6.5rem; } table.dt .cell[data-f=ruc] { min-width:8.5rem; } table.dt .cell[data-f=razon] { min-width:13rem; }
   table.dt .cell[data-f=serie] { min-width:7.5rem; } table.dt .cell[data-f=fecha] { min-width:6.8rem; } table.dt .cell[data-f=moneda] { min-width:4.2rem; }
   table.dt .cell.num { min-width:5.8rem; }
+  table.dt .cell[data-f=abrev] { min-width:4.5rem; width:5rem; } table.dt .cell[data-f=paciente] { min-width:15rem; }
   table.dt .mono { font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
   table.dt td.sticky-c, table.dt th.sticky-c { position:sticky; left:0; z-index:1; }
   table.dt th.sticky-c { z-index:3; }
@@ -213,13 +214,14 @@
           <label class="lbl" for="nameMode">Nombre de cada PDF individual</label>
           <select id="nameMode" class="field">
             <option value="original">Nombre original (recomendado)</option>
+            <option value="expediente">Expediente: PROVEEDOR SERIE PACIENTE (ej. COA F401-00074658 PEREZ…)</option>
             <option value="serie">Serie-Número (ej. E001-123)</option>
             <option value="ruc_serie">RUC_Serie-Número</option>
             <option value="custom">Personalizado…</option>
           </select>
           <div id="namePatternWrap" class="is-hidden mt-2">
             <input id="namePattern" class="field" value="{fecha}_{ruc}_{serie}" placeholder="{fecha}_{ruc}_{serie}">
-            <p class="hint">Variables: <code>{nombre}</code> <code>{ruc}</code> <code>{serie}</code> <code>{fecha}</code> <code>{total}</code>. Si un dato no se detecta, se usa el nombre original.</p>
+            <p class="hint">Variables: <code>{abrev}</code> (abreviatura del proveedor) <code>{serie}</code> <code>{paciente}</code> <code>{nombre}</code> <code>{ruc}</code> <code>{fecha}</code> <code>{total}</code>. Si un dato no se detecta, se usa el nombre original.</p>
           </div>
         </div>
         <div class="grid grid-cols-2 gap-3">
@@ -261,10 +263,22 @@
       <div id="resStats" class="flex flex-wrap gap-2 text-xs"></div>
     </div>
 
-    <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-      <button id="btnDlZip" class="btn btn-ok">📁 ZIP · PDFs individuales</button>
-      <button id="btnDlMerged" class="btn btn-indigo">📄 1 PDF consolidado</button>
-      <button id="btnDlExcel" class="btn btn-teal is-hidden">📊 Excel (.xlsx)</button>
+    <div class="rounded-xl border border-blue-200 bg-blue-50/60 p-4 space-y-3">
+      <div>
+        <p class="text-sm font-bold text-blue-950">Todo junto, en orden</p>
+        <p class="text-xs text-blue-900/80 mt-0.5"><b>1</b> Expedientes completos (todas las hojas, tal cual llegaron) · <b>2</b> Facturas de 1 hoja · <b>3</b> PDF consolidado <span id="pkgExcelNote">· y el Excel</span>. Con los nombres elegidos arriba.</p>
+      </div>
+      <div class="grid gap-3 sm:grid-cols-2">
+        <button id="btnSaveFolder" class="btn btn-primary">💾 Guardar en una carpeta…</button>
+        <button id="btnDlPack" class="btn btn-ok">📦 Descargar todo (.zip)</button>
+      </div>
+      <p id="folderHint" class="hint !mt-0"></p>
+    </div>
+    <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+      <button id="btnDlFull" class="btn btn-ghost">🗂 Solo expedientes completos (.zip)</button>
+      <button id="btnDlZip" class="btn btn-ghost">📁 Solo 1ª hojas (.zip)</button>
+      <button id="btnDlMerged" class="btn btn-ghost">📄 Solo PDF consolidado</button>
+      <button id="btnDlExcel" class="btn btn-ghost is-hidden">📊 Excel (.xlsx)</button>
       <button id="btnCopy" class="btn btn-ghost is-hidden">📋 Copiar tabla</button>
     </div>
     <div id="dlProg" class="is-hidden"></div>
@@ -279,7 +293,7 @@
       <div class="overflow-auto max-h-[28rem] custom-scroll border border-slate-200 rounded-xl">
         <table class="dt">
           <thead><tr>
-            <th class="sticky-c">N°</th><th>Archivo</th><th>Tipo</th><th>RUC emisor</th><th>Razón social</th><th>Serie-Número</th><th>Fecha</th><th>Mon.</th><th>Subtotal</th><th>IGV</th><th>Total</th><th>Avisos</th><th>Método</th><th></th>
+            <th class="sticky-c">N°</th><th>Archivo</th><th>Tipo</th><th>RUC emisor</th><th>Razón social</th><th>Abrev.</th><th>Serie-Número</th><th>Paciente</th><th>Fecha</th><th>Mon.</th><th>Subtotal</th><th>IGV</th><th>Total</th><th>Avisos</th><th>Método</th><th></th>
           </tr></thead>
           <tbody id="dataBody"></tbody>
         </table>
@@ -907,7 +921,7 @@ function parseInvoice(rawText, rawLines) {
   const tiers = [/IMPORTE\s+TOTAL(?:\s+A\s+PAGAR)?(?:\s+DE\s+LA\s+VENTA)?/g, /TOTAL\s+A\s+PAGAR/g, /IMPORTE\s+A\s+PAGAR/g, /TOTAL\s+PRECIO\s+DE\s+VENTA/g, /PRECIO\s+TOTAL/g, /MONTO\s+TOTAL/g, /TOTAL\s+VENTA/g, /TOTAL\s+GENERAL/g, /TOTAL\s+FACTURA/g,
     /TOTAL(?!\s*(?:DESCUENTO|DCTO|IGV|I\.G\.V|GRAVAD|EXONERAD|INAFECT|GRATUIT|VALOR|ANTICIP|OP\b|ISC|OTROS|ICBPER|PAGINA|ITEM|CANTIDAD|BULTOS|PESO|DE\s+ITEMS))/g];
   for (const re of tiers) { const v = pick(scanAmounts(A, re, { skip: skipTotal })); if (v != null) { r.total = v; break; } }
-  r.subtotal = pick(scanAmounts(A, /OP\.?\s*GRAVAD[AO]S?/g)) ?? pick(scanAmounts(A, /TOTAL\s+GRAVAD[AO]S?/g)) ?? pick(scanAmounts(A, /SUB\s*TOTAL/g)) ?? pick(scanAmounts(A, /BASE\s+IMPONIBLE/g)) ?? pick(scanAmounts(A, /TOTAL\s+VALOR\s+DE\s+VENTA/g));
+  r.subtotal = pick(scanAmounts(A, /(?:OP\.?|OPERACION(?:ES)?)\s*GRAVAD[AO]S?/g)) ?? pick(scanAmounts(A, /TOTAL\s+GRAVAD[AO]S?/g)) ?? pick(scanAmounts(A, /SUB\s*TOTAL/g)) ?? pick(scanAmounts(A, /BASE\s+IMPONIBLE/g)) ?? pick(scanAmounts(A, /TOTAL\s+VALOR\s+DE\s+VENTA/g));
   r.igv = pick(scanAmounts(A, /(?:^|[^A-Z])I\.?\s?G\.?\s?V\.?(?![A-Z])/g, { win: 40 }));
   if (r.total == null) {                                                 // último recurso: el mayor importe de la hoja
     const all = [...A.matchAll(/\d{1,3}(?:[.,]\d{3})+[.,]\d{2}(?!\d)|\d+[.,]\d{2}(?!\d)/g)].map(x => parseNum(x[0])).filter(n => n != null);
@@ -919,7 +933,34 @@ function parseInvoice(rawText, rawLines) {
   const segs = lines.slice(0, 14).flatMap(l => l.split(/\s{3,}/)).map(x => x.trim());
   const cand = segs.find(l => soc.test(normTxt(l)) && !/FACTURA|BOLETA|R\.?U\.?C\b|SE[ÑN]OR|CLIENTE|ADQUIR|DIRECCI/i.test(normTxt(l)) && l.length < 90);
   if (cand) r.razon = cand;
+
+  // --- Paciente / asegurado (facturas de clínicas): valor junto a su etiqueta en la misma línea
+  const PAC = /^(?:NOMBRE\s+DEL\s+PACIENTE|PACIENTE|ASEGURADO|AFILIADO|BENEFICIARIO)\b\s*[:.]?\s*(.*)$/;
+  pac: for (const l of lines) {
+    const sg = l.split(/\s{3,}/).map(x => x.trim()).filter(Boolean);
+    for (let i = 0; i < sg.length; i++) {
+      const m = PAC.exec(normTxt(sg[i])); if (!m) continue;
+      let v = m[1] ? sg[i].slice(sg[i].length - m[1].length) : (sg[i + 1] || '');   // resto del mismo bloque o el bloque siguiente
+      v = v.replace(/[|:;,.\s]+$/, '').replace(/\s+/g, ' ').trim();
+      if (/[A-Za-zÁÉÍÓÚÑáéíóúñ]{2}/.test(v) && v.length >= 4 && v.length <= 80 && !/^(EL MISMO|LA MISMA|-+)$/i.test(v)) { r.paciente = v.toUpperCase(); break pac; }
+    }
+  }
+  r.abrev = guessAbrev(T, r.ruc, r.razon);
   return r;
+}
+
+/* Abreviatura del proveedor para nombrar expedientes (ej. COA). Prioridad: la que el usuario guardó para ese RUC;
+   luego el dominio web impreso en la factura (www.coa.pe) si encaja con las iniciales de la razón social; si no, las iniciales. */
+const STOP_W = /^(DE|DEL|LA|LAS|LOS|EL|Y|E|EN|S|A|C|R|L|SAC|SA|SRL|EIRL|SAA|SCRL|S\.A\.C\.?|S\.A\.?|S\.R\.L\.?|E\.I\.R\.L\.?)$/;
+function guessAbrev(T, ruc, razon) {
+  const saved = (store.get('abrevMap', {}) || {})[ruc]; if (saved) return saved;
+  const ini = normTxt(razon || '').replace(/[^A-Z0-9 ]/g, ' ').split(/\s+/).filter(w => w && !STOP_W.test(w)).map(w => w[0]).join('');
+  const isSub = (a, b) => { let j = 0; for (const c of b) if (c === a[j]) j++; return a.length > 1 && j === a.length; };
+  for (const m of T.matchAll(/WWW\.([A-Z0-9-]{2,20})\.(?:COM\.PE|ORG\.PE|GOB\.PE|EDU\.PE|PE|COM|ORG|NET)\b/g)) {
+    const d = m[1].replace(/-/g, '');
+    if (ini && (isSub(d, ini) || normTxt(razon).replace(/[^A-Z0-9]/g, '').includes(d))) return d;
+  }
+  return ini.slice(0, 6);
 }
 
 function computeFlags(r) {
@@ -927,6 +968,8 @@ function computeFlags(r) {
   if (r.error) f.push([r.error, 'bad']);
   if (!r.ruc) f.push(['Sin RUC', 'warn']); else if (!rucValido(r.ruc)) f.push(['RUC inválido', 'bad']);
   if (!r.serie) f.push(['Sin serie-número', 'warn']);
+  if (batch && /\{paciente\}/.test(namePattern(batch.opts)) && !r.paciente) f.push(['Sin paciente', 'warn']);
+  if (batch && /\{abrev\}/.test(namePattern(batch.opts)) && !r.abrev) f.push(['Sin abreviatura', 'warn']);
   if (!r.fecha) f.push(['Sin fecha', 'warn']); else if (!parseDMY(r.fecha)) f.push(['Fecha no válida', 'warn']);
   if (r.total == null) f.push(['Sin total', 'warn']);
   else if (r.totalEstimado) f.push(['Total estimado', 'warn']);
@@ -1025,7 +1068,7 @@ async function geminiCall(model, key, body, opts) {                       // si 
   }
 }
 const AI_SCHEMA = { type: 'OBJECT', properties: {
-  tipo_documento: { type: 'STRING' }, ruc_emisor: { type: 'STRING' }, razon_social_emisor: { type: 'STRING' }, ruc_cliente: { type: 'STRING' },
+  tipo_documento: { type: 'STRING' }, ruc_emisor: { type: 'STRING' }, razon_social_emisor: { type: 'STRING' }, ruc_cliente: { type: 'STRING' }, paciente: { type: 'STRING' },
   serie_numero: { type: 'STRING' }, fecha_emision: { type: 'STRING' }, moneda: { type: 'STRING' },
   subtotal: { type: 'NUMBER' }, igv: { type: 'NUMBER' }, total: { type: 'NUMBER' } },
   required: ['ruc_emisor', 'serie_numero', 'fecha_emision', 'moneda', 'total'] };
@@ -1038,6 +1081,7 @@ Reglas:
 - moneda: código ISO (PEN, USD o EUR).
 - subtotal: valor de venta/base imponible sin IGV; igv: monto del IGV; total: IMPORTE TOTAL a pagar (con IGV). Números sin separador de miles y con punto decimal.
 - tipo_documento: Factura, Boleta, Nota de crédito, Nota de débito u otro.
+- paciente: nombre completo del PACIENTE/asegurado si la factura lo indica (no el titular ni la empresa), en mayúsculas.
 - Si un dato no existe, usa "" (texto) o 0 (número). No inventes.${text ? `\n\nTexto extraído de la página (puede tener errores):\n${text.slice(0, 5000)}` : ''}`;
   const parts = [{ text: prompt }];
   if (imageB64) parts.push({ inline_data: { mime_type: 'image/jpeg', data: imageB64 } });
@@ -1061,6 +1105,7 @@ function mergeAi(local, ai) {                                           // combi
   const mo = String(ai.moneda || '').toUpperCase(); if (/^(PEN|USD|EUR)$/.test(mo)) r.moneda = mo; else if (/SOL|S\//.test(mo)) r.moneda = 'PEN'; else if (/DOL|US/.test(mo)) r.moneda = 'USD';
   if (ai.razon_social_emisor && String(ai.razon_social_emisor).trim()) r.razon = String(ai.razon_social_emisor).trim();
   if (ai.tipo_documento && String(ai.tipo_documento).trim()) r.tipo = String(ai.tipo_documento).trim();
+  if (ai.paciente && String(ai.paciente).trim().length > 3 && !r.paciente) r.paciente = String(ai.paciente).trim().toUpperCase();
   const num = v => { const n = parseNum(v); return n != null && n > 0 ? n : null; };
   const t = num(ai.total);
   if (t != null) { if (local.total != null && !local.totalEstimado && Math.abs(local.total - t) > 0.01) r.notas.push(`Total del texto: ${fmtMoney(local.total)}`); r.total = t; r.totalEstimado = false; }
@@ -1118,13 +1163,14 @@ function readOpts() {
     mergedName: $('#mergedName').value.trim(), extract: $('#optExtract').checked, ocr: $('#optOcr').checked, forceOcr: $('#optForceOcr').checked,
     ai: $('#optAi').checked && !!getKey() };
 }
+const namePattern = o => o.mode === 'serie' ? '{serie}' : o.mode === 'ruc_serie' ? '{ruc}_{serie}' : o.mode === 'expediente' ? '{abrev} {serie} {paciente}' : (o.pattern || '{nombre}');
 function buildOutName(it, o) {
   const base = it.name.replace(/\.pdf$/i, ''), r = it.row;
   let name = base;
   if (o.mode !== 'original' && r) {
-    const pat = o.mode === 'serie' ? '{serie}' : o.mode === 'ruc_serie' ? '{ruc}_{serie}' : (o.pattern || '{nombre}');
+    const pat = namePattern(o);
     let missing = false;
-    const v = { nombre: base, ruc: r.ruc, serie: r.serie, fecha: (r.fecha || '').replace(/\//g, '-'), total: r.total != null ? r.total.toFixed(2) : '' };
+    const v = { nombre: base, ruc: r.ruc, serie: r.serie, fecha: (r.fecha || '').replace(/\//g, '-'), total: r.total != null ? r.total.toFixed(2) : '', abrev: (r.abrev || '').trim(), paciente: (r.paciente || '').trim() };
     name = pat.replace(/\{(\w+)\}/g, (_, k) => { const x = v[k]; if (x === undefined || x === '') { missing = true; return ''; } return x; });
     if (missing || !sanitizeName(name).replace(/[-_ ]/g, '')) name = base;
   }
@@ -1188,7 +1234,7 @@ async function processInvoices() {
         const [pg] = await merged.copyPages(single, [0]); merged.addPage(pg); mergedCount++;
         if (o.extract) {
           try { rec.row = await analyzeFirstPage(buf, o, msg => progFact.text(`${msg} ${label}`)); }
-          catch (ex) { rec.row = { tipo: '', ruc: '', rucCliente: '', razon: '', serie: '', fecha: '', moneda: '', subtotal: null, igv: null, total: null, notas: [], metodo: 'Error', error: 'Error de lectura: ' + (ex.message || ex) }; }
+          catch (ex) { rec.row = { tipo: '', ruc: '', rucCliente: '', razon: '', paciente: '', abrev: '', serie: '', fecha: '', moneda: '', subtotal: null, igv: null, total: null, notas: [], metodo: 'Error', error: 'Error de lectura: ' + (ex.message || ex) }; }
         }
         e.status = 'ok';
       } catch (ex) {
@@ -1233,6 +1279,9 @@ function renderResults() {
   const eb = $('#errBox'); show(eb, b.errors.length > 0);
   eb.innerHTML = b.errors.length ? `<b>Archivos con problemas:</b><ul class="list-disc pl-5 mt-1 space-y-0.5">${b.errors.map(e => `<li><b>${esc(e.name)}</b> — ${esc(e.msg)}</li>`).join('')}</ul>` : '';
   $('#btnDlZip').disabled = !b.items.length; $('#btnDlMerged').disabled = !b.mergedBlob;
+  ['btnDlFull', 'btnDlPack', 'btnSaveFolder'].forEach(id => $('#' + id).disabled = !b.items.length);
+  show($('#pkgExcelNote'), o.extract && rows.length > 0);
+  $('#folderHint').textContent = window.showDirectoryPicker ? 'Eliges la carpeta y se crean dentro las subcarpetas «1 Expedientes completos» y «2 Facturas 1ra hoja», más el consolidado. Si un archivo ya existe, se guarda como «(2)», nunca se sobrescribe.' : 'Tu navegador no permite guardar directo en una carpeta: usa «Descargar todo (.zip)» o abre la página en Microsoft Edge o Google Chrome.';
   show($('#btnDlExcel'), o.extract && rows.length > 0); show($('#btnCopy'), o.extract && rows.length > 0);
   show($('#dataWrap'), o.extract && rows.length > 0);
   if (o.extract) { renderTable(); updateTotals(); }
@@ -1249,7 +1298,7 @@ function renderTable() {
     return `<tr data-id="${it.id}" class="${rowClass(r)}">
       <td class="sticky-c text-slate-400 text-center bg-white">${n + 1}</td>
       <td class="max-w-[14rem]"><div class="truncate font-medium px-1" title="${esc(it.name)}">${esc(it.name)}</div></td>
-      ${cell('tipo')}${cell('ruc', 'mono')}${cell('razon')}${cell('serie', 'mono font-bold')}${cell('fecha')}
+      ${cell('tipo')}${cell('ruc', 'mono')}${cell('razon')}${cell('abrev', 'font-bold')}${cell('serie', 'mono font-bold')}${cell('paciente')}${cell('fecha')}
       <td><select class="cell" data-f="moneda" aria-label="moneda">${['PEN', 'USD', 'EUR'].map(m => `<option ${r.moneda === m ? 'selected' : ''}>${m}</option>`).join('')}</select></td>
       ${amt('subtotal')}${amt('igv')}${amt('total')}
       <td data-role="flags" class="min-w-[9rem]">${flagsHtml(r)}</td>
@@ -1263,12 +1312,18 @@ $('#dataBody').addEventListener('input', e => {
   if (['subtotal', 'igv', 'total'].includes(f)) { r[f] = el.value.trim() === '' ? null : parseNum(el.value); if (f === 'total') r.totalEstimado = false; }
   else r[f] = f === 'ruc' ? el.value.replace(/\D/g, '').slice(0, 11) : el.value;
   if (f === 'ruc' && el.value !== r.ruc) el.value = r.ruc;
+  if (f === 'abrev') {                                                   // la abreviatura se recuerda por RUC y se aplica a todas sus filas
+    const v = el.value.trim().toUpperCase(), map = store.get('abrevMap', {}) || {};
+    if (r.ruc) { if (v) map[r.ruc] = v; else delete map[r.ruc]; store.set('abrevMap', map); }
+    batch.items.forEach(x => { if (x.row && x.row !== r && r.ruc && x.row.ruc === r.ruc) { x.row.abrev = v; const t = $(`#dataBody tr[data-id="${x.id}"]`), inp = t && t.querySelector('[data-f=abrev]'); if (inp) inp.value = v; if (t) { t.className = rowClass(x.row); t.querySelector('[data-role=flags]').innerHTML = flagsHtml(x.row); } } });
+  }
+  if (f === 'paciente') r.paciente = el.value.toUpperCase();
   tr.className = rowClass(r); tr.querySelector('[data-role=flags]').innerHTML = flagsHtml(r); updateTotals();
 });
 $('#dataBody').addEventListener('click', e => { const b = e.target.closest('[data-act=pv]'); if (b) openPreview(batch.items.find(x => x.id === +b.closest('tr').dataset.id).file, 1); });
 $('#dataFilter').addEventListener('input', e => {
   const q = normTxt(e.target.value.trim());
-  $$('#dataBody tr').forEach(tr => { const it = batch.items.find(x => x.id === +tr.dataset.id), r = it.row; tr.style.display = !q || normTxt([it.name, r.ruc, r.razon, r.serie, r.fecha, r.tipo].join(' ')).includes(q) ? '' : 'none'; });
+  $$('#dataBody tr').forEach(tr => { const it = batch.items.find(x => x.id === +tr.dataset.id), r = it.row; tr.style.display = !q || normTxt([it.name, r.ruc, r.razon, r.serie, r.fecha, r.tipo, r.paciente, r.abrev].join(' ')).includes(q) ? '' : 'none'; });
 });
 
 // --- descargas
@@ -1281,33 +1336,77 @@ $('#btnDlZip').onclick = async () => {
     download(blob, 'Facturas_1ra_Hoja.zip'); toast('ZIP descargado', 'ok');
   } catch (e) { toast('No se pudo crear el ZIP: ' + (e.message || e), 'bad'); } finally { progDl.hide(); b.disabled = false; }
 };
+/* --- Paquete completo: 1 expedientes completos (bytes originales, sin tocar), 2 facturas de 1 hoja, 3 consolidado (+ Excel) --- */
+const DIR_FULL = '1 Expedientes completos', DIR_ONE = '2 Facturas 1ra hoja';
+function packEntries({ full = true, one = true, merged = true, excel = true } = {}) {
+  computeOutNames(); const out = [], o = batch.opts;
+  if (full) batch.items.forEach(it => it.singleBytes && out.push({ dir: DIR_FULL, name: it.outName, data: it.file }));
+  if (one) batch.items.forEach(it => it.singleBytes && out.push({ dir: DIR_ONE, name: it.outName, data: it.singleBytes }));
+  if (merged && batch.mergedBlob) out.push({ dir: '', name: '3 ' + ensurePdfExt(o.mergedName, 'Facturas_Unificadas.pdf'), data: batch.mergedBlob });
+  if (excel && o.extract && window.XLSX && batch.items.some(i => i.row)) out.push({ dir: '', name: '4 ' + excelName(), data: new Blob([XLSX.write(buildExcelWb(), { bookType: 'xlsx', type: 'array', cellDates: true })]) });
+  return out;
+}
+async function zipEntries(entries, zipName, label) {
+  progDl.start(label); const zip = new JSZip();
+  entries.forEach(e => zip.file(e.dir ? `${e.dir}/${e.name}` : e.name, e.data, { binary: true }));
+  const blob = await zip.generateAsync({ type: 'blob', compression: 'STORE' }, m => progDl.set(m.percent, label));
+  download(blob, zipName);
+}
+async function withDl(btn, fn) {
+  if (!batch) return; btn.disabled = true;
+  try { await fn(); } catch (e) { if (e?.name !== 'AbortError') toast('No se pudo completar: ' + (e.message || e), 'bad', 7000); }
+  finally { progDl.hide(); btn.disabled = false; }
+}
+$('#btnDlPack').onclick = () => withDl($('#btnDlPack'), async () => { await zipEntries(packEntries(), 'Expedientes_y_Facturas.zip', 'Empaquetando todo…'); toast('ZIP con todo descargado', 'ok'); });
+$('#btnDlFull').onclick = () => withDl($('#btnDlFull'), async () => { await zipEntries(packEntries({ one: false, merged: false, excel: false }).map(e => ({ ...e, dir: '' })), 'Expedientes_completos.zip', 'Empaquetando expedientes…'); toast('Expedientes completos descargados', 'ok'); });
+async function freeName(dir, name) {                                      // nunca sobrescribe: «nombre (2).pdf»
+  const dot = name.lastIndexOf('.'), b = dot > 0 ? name.slice(0, dot) : name, x = dot > 0 ? name.slice(dot) : '';
+  for (let i = 1; ; i++) { const n = i === 1 ? name : `${b} (${i})${x}`; try { await dir.getFileHandle(n); } catch (e) { if (e.name === 'NotFoundError') return n; throw e; } }
+}
+$('#btnSaveFolder').onclick = () => withDl($('#btnSaveFolder'), async () => {
+  if (!window.showDirectoryPicker) return toast('Tu navegador no permite elegir carpeta: usa «Descargar todo (.zip)» o abre la página en Edge/Chrome', 'warn', 7000);
+  const root = await window.showDirectoryPicker({ id: 'facturapro', mode: 'readwrite' });
+  const entries = packEntries(), subs = {}; progDl.start('Guardando en la carpeta…');
+  for (let i = 0; i < entries.length; i++) {
+    const e = entries[i], dir = e.dir ? (subs[e.dir] ||= await root.getDirectoryHandle(e.dir, { create: true })) : root;
+    const fh = await dir.getFileHandle(await freeName(dir, e.name), { create: true }), w = await fh.createWritable();
+    await w.write(e.data); await w.close();
+    progDl.set(((i + 1) / entries.length) * 100, `Guardando ${i + 1} de ${entries.length}: ${e.name}`);
+  }
+  toast(`Guardado en «${root.name}»: ${entries.length} archivos`, 'ok', 6000);
+});
 $('#btnDlMerged').onclick = () => { if (!batch?.mergedBlob) return; const n = ensurePdfExt(batch.opts.mergedName, 'Facturas_Unificadas.pdf'); download(batch.mergedBlob, n); toast('PDF consolidado descargado', 'ok'); };
 function tableMatrix() {
   computeOutNames();
   return batch.items.filter(i => i.row).map((it, n) => {
-    const r = it.row; return [n + 1, it.name, it.outName || '', r.tipo, r.ruc, r.razon, r.rucCliente, r.serie, r.fecha, r.moneda, r.subtotal, r.igv, r.total, computeFlags(r).map(f => f[0]).join('; '), r.metodo || ''];
+    const r = it.row; return [n + 1, it.name, it.outName || '', r.tipo, r.ruc, r.razon, r.abrev || '', r.rucCliente, r.serie, r.paciente || '', r.fecha, r.moneda, r.subtotal, r.igv, r.total, computeFlags(r).map(f => f[0]).join('; '), r.metodo || ''];
   });
 }
-const XL_HEAD = ['N°', 'Archivo original', 'Archivo generado', 'Tipo', 'RUC emisor', 'Razón social', 'RUC cliente', 'Serie-Número', 'Fecha emisión', 'Moneda', 'Subtotal', 'IGV', 'Total', 'Avisos', 'Método'];
-$('#btnDlExcel').onclick = () => {
-  if (!window.XLSX) return toast('La librería de Excel no está disponible', 'bad');
+const XL_HEAD = ['N°', 'Archivo original', 'Archivo generado', 'Tipo', 'RUC emisor', 'Razón social', 'Abreviatura', 'RUC cliente', 'Serie-Número', 'Paciente', 'Fecha emisión', 'Moneda', 'Subtotal', 'IGV', 'Total', 'Avisos', 'Método'];
+const XL_DATE = XL_HEAD.indexOf('Fecha emisión'), XL_AMT = ['Subtotal', 'IGV', 'Total'].map(h => XL_HEAD.indexOf(h));
+function buildExcelWb() {
   const body = tableMatrix().map(row => row.map((v, c) => {
-    if (c === 8) { const d = parseDMY(v); return d ? new Date(d.y, d.m - 1, d.d, 12) : v; }   // fecha real de Excel
+    if (c === XL_DATE) { const d = parseDMY(v); return d ? new Date(d.y, d.m - 1, d.d, 12) : v; }   // fecha real de Excel
     return v === null ? '' : v;
   }));
   const ws = XLSX.utils.aoa_to_sheet([XL_HEAD, ...body], { cellDates: true });
   body.forEach((row, i) => {
-    if (row[8] instanceof Date) ws[XLSX.utils.encode_cell({ r: i + 1, c: 8 })].z = 'dd/mm/yyyy';
-    [10, 11, 12].forEach(c => { const cell = ws[XLSX.utils.encode_cell({ r: i + 1, c })]; if (cell && cell.t === 'n') cell.z = '#,##0.00'; });
+    if (row[XL_DATE] instanceof Date) ws[XLSX.utils.encode_cell({ r: i + 1, c: XL_DATE })].z = 'dd/mm/yyyy';
+    XL_AMT.forEach(c => { const cell = ws[XLSX.utils.encode_cell({ r: i + 1, c })]; if (cell && cell.t === 'n') cell.z = '#,##0.00'; });
   });
-  ws['!cols'] = [5, 34, 34, 14, 14, 36, 14, 16, 12, 8, 12, 12, 13, 40, 16].map(w => ({ wch: w }));
+  ws['!cols'] = [5, 34, 44, 14, 14, 36, 10, 14, 16, 34, 12, 8, 12, 12, 13, 40, 16].map(w => ({ wch: w }));
   ws['!autofilter'] = { ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: body.length, c: XL_HEAD.length - 1 } }) };
   const t = totalsByCurrency();
   const ws2 = XLSX.utils.aoa_to_sheet([['Moneda', 'Comprobantes', 'Total'], ...Object.entries(t).map(([k, v]) => [k, v.n, Math.round(v.total * 100) / 100])]);
   Object.keys(t).forEach((_, i) => { const c = ws2[XLSX.utils.encode_cell({ r: i + 1, c: 2 })]; if (c) c.z = '#,##0.00'; });
   ws2['!cols'] = [{ wch: 10 }, { wch: 14 }, { wch: 16 }];
   const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Facturas'); XLSX.utils.book_append_sheet(wb, ws2, 'Resumen');
-  XLSX.writeFile(wb, `Reporte_Facturas_${new Date().toISOString().slice(0, 10)}.xlsx`, { cellDates: true });
+  return wb;
+}
+const excelName = () => `Reporte_Facturas_${new Date().toISOString().slice(0, 10)}.xlsx`;
+$('#btnDlExcel').onclick = () => {
+  if (!window.XLSX) return toast('La librería de Excel no está disponible', 'bad');
+  XLSX.writeFile(buildExcelWb(), excelName(), { cellDates: true });
   toast('Excel descargado', 'ok');
 };
 $('#btnCopy').onclick = async () => {
