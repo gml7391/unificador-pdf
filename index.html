@@ -266,7 +266,7 @@
         <label class="chk"><input type="checkbox" id="optExtract"><span><b>Extraer datos de la factura</b><small>RUC, razón social, serie-número, fecha, moneda, subtotal, IGV y total. Genera una tabla editable y el Excel.</small></span></label>
         <div id="extractSub" class="pl-6 space-y-2.5 border-l-2 border-slate-100 ml-2">
           <label class="chk"><input type="checkbox" id="optOcr"><span><b>Activar OCR</b> (facturas escaneadas / imagen)<small>Se usa automáticamente cuando la página no tiene texto digital. Descarga ~10 MB la primera vez.</small></span></label>
-          <label class="chk"><input type="checkbox" id="optForceOcr"><span>Forzar OCR siempre<small>Solo si el texto digital sale corrupto.</small></span></label>
+          <label class="chk"><input type="checkbox" id="optForceOcr"><span>Forzar OCR siempre<small>El texto digital igual manda; el OCR solo completa datos que falten.</small></span></label>
           <label class="chk"><input type="checkbox" id="optAi"><span><b>Mejorar con IA Gemini</b> <span id="optAiState" class="badge b-gray">sin clave</span><small>Lee la imagen de la página 1 y corrige al motor local. Requiere clave gratuita (botón ✨ arriba).</small></span></label>
         </div>
       </div>
@@ -990,7 +990,7 @@ function findPaciente(lines) {
     for (let i = 0; i < sg.length; i++) {
       const m = PAC.exec(normTxt(sg[i])); if (!m) continue;
       let v = m[1] ? sg[i].slice(sg[i].length - m[1].length) : (sg[i + 1] || '');   // resto del mismo bloque o el bloque siguiente
-      v = v.replace(/[|:;,.\s]+$/, '').replace(/\s+/g, ' ').trim();
+      v = v.replace(/^[\s:;.\-–—|]+/, '').replace(/[|:;,.\s]+$/, '').replace(/\s+/g, ' ').trim();
       if (/[A-Za-zÁÉÍÓÚÑáéíóúñ]{2}/.test(v) && v.length >= 4 && v.length <= 80 && !/^(EL MISMO|LA MISMA|-+)$/i.test(v) && !/\d{3}/.test(v)) return v.toUpperCase();
     }
   }
@@ -1260,15 +1260,27 @@ async function analyzeFirstPage(buf, o, setStatus, fileName = '') {
     let lines = await pageTextLines(page), text = lines.join('\n'), method = 'Texto digital';
     const scanned = text.replace(/\s/g, '').length < 25;
     const notas = [];
-    if (scanned || (o.ocr && o.forceOcr)) {                               // hoja 1 en imagen: OCR automático
+    const safeParse = (t, l) => { try { return parseInvoice(t, l); } catch (e) { return parseInvoice('', []); } };
+    const runOcr = async () => {
       setStatus('Aplicando OCR a la página 1…');
       ocrLog = m => { if (m.status === 'recognizing text') setStatus(`OCR: ${Math.round(m.progress * 100)}%`); else if (m.status) setStatus('Preparando OCR…'); };
-      text = await ocrCanvas(await renderPage(page, { maxSide: 2400 }));
-      lines = text.split(/\n/).map(l => l.trim()).filter(Boolean); method = 'OCR';
-    }
+      const t = await ocrCanvas(await renderPage(page, { maxSide: 2400 }));
+      return { t, l: t.split(/\n/).map(x => x.trim()).filter(Boolean) };
+    };
     let r;
-    try { r = parseInvoice(text, lines); }
-    catch (e) { r = parseInvoice('', []); }
+    if (scanned) {                                                        // hoja 1 en imagen: OCR automático
+      const oc = await runOcr(); text = oc.t; lines = oc.l; method = 'OCR'; r = safeParse(text, lines);
+    } else {
+      r = safeParse(text, lines);                                         // el texto digital siempre manda
+      if (o.ocr && o.forceOcr) {                                          // «Forzar OCR»: solo completa lo que el texto digital no trajo
+        try {
+          const oc = await runOcr(), ro = safeParse(oc.t, oc.l); let used = false;
+          for (const k of ['ruc', 'razon', 'serie', 'fecha', 'paciente', 'tipo', 'abrev']) if (!r[k] && ro[k]) { r[k] = ro[k]; used = true; }
+          for (const k of ['subtotal', 'igv', 'total']) if (r[k] == null && ro[k] != null) { r[k] = ro[k]; used = true; }
+          if (used) method = 'Texto digital + OCR';
+        } catch (e) { notas.push('OCR no disponible: ' + (e.message || e)); }
+      }
+    }
     r.notas.push(...notas);
     if (!r.serie) { const fs = serieFromName(fileName); if (fs) { r.serie = fs; r.notas.push('Serie-número tomada del nombre del archivo'); } }
     if (!r.ruc) { const fr = rucFromName(fileName); if (fr) r.ruc = fr; }
