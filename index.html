@@ -91,7 +91,11 @@
   table.dt .cell[data-f=tipo] { min-width:6.5rem; } table.dt .cell[data-f=ruc] { min-width:8.5rem; } table.dt .cell[data-f=razon] { min-width:13rem; }
   table.dt .cell[data-f=serie] { min-width:7.5rem; } table.dt .cell[data-f=fecha] { min-width:6.8rem; } table.dt .cell[data-f=moneda] { min-width:4.2rem; }
   table.dt .cell.num { min-width:5.8rem; }
-  table.dt .cell[data-f=abrev] { min-width:4.5rem; width:5rem; } table.dt .cell[data-f=paciente] { min-width:15rem; }
+  table.dt .cell[data-f=abrev] { min-width:9rem; }
+  table.dt tr.excl td { opacity:.5; } table.dt tr.excl td:first-child, table.dt tr.excl td:nth-child(2) { opacity:1; }
+  .tree-row { white-space:nowrap; } .tree-dim { color:#94a3b8; } .tree-dir { font-weight:700; color:#1e3a8a; }
+  .aprow { display:flex; flex-wrap:wrap; align-items:center; gap:.5rem; padding:.55rem .7rem; border:1px solid var(--line); border-radius:.75rem; background:#fff; }
+  .aprow details summary { cursor:pointer; color:#1d4ed8; font-size:.72rem; font-weight:600; } table.dt .cell[data-f=paciente] { min-width:15rem; }
   table.dt .mono { font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
   table.dt td.sticky-c, table.dt th.sticky-c { position:sticky; left:0; z-index:1; }
   table.dt th.sticky-c { z-index:3; }
@@ -204,6 +208,24 @@
     </div>
   </div>
 
+  <!-- Aprobaciones -->
+  <div class="card p-5 space-y-4">
+    <div class="flex flex-wrap items-center justify-between gap-2">
+      <h3 class="font-bold text-sm flex items-center gap-2"><span class="step !bg-emerald-100 !text-emerald-700">✓</span> Correos de aprobación <span class="badge b-gray">opcional</span></h3>
+      <span id="apCount" class="text-xs text-slate-500"></span>
+    </div>
+    <p class="text-xs text-slate-600 -mt-2">Sube <b>1 PDF por cada correo</b> de aprobación (impreso desde Outlook). La app lee qué facturas están <b>aprobadas</b> u <b>observadas</b> y las cruza con tus expedientes: solo pasan las aprobadas. Al final, todos los correos se unen en un solo PDF, sin quitar hojas.</p>
+    <div id="dzAprob" class="dz !py-5" tabindex="0" role="button" aria-label="Seleccionar correos de aprobación">
+      <p class="text-sm font-bold text-slate-700">Arrastra aquí los PDF de aprobación</p>
+      <p class="text-xs text-slate-500 mt-1">o haz clic para elegirlos · puedes agregar más en cualquier momento, incluso después de procesar</p>
+      <input type="file" id="inAprob" multiple accept="application/pdf,.pdf" class="is-hidden">
+    </div>
+    <div id="apWrap" class="is-hidden space-y-2">
+      <div class="flex justify-end"><button class="btn btn-danger btn-xs" id="btnClearAp">Quitar todos los correos</button></div>
+      <div id="apList" class="space-y-1.5"></div>
+    </div>
+  </div>
+
   <!-- Paso 2 -->
   <div class="card p-5 space-y-4">
     <h3 class="font-bold text-sm flex items-center gap-2"><span class="step">2</span> Opciones</h3>
@@ -214,14 +236,14 @@
           <label class="lbl" for="nameMode">Nombre de cada PDF individual</label>
           <select id="nameMode" class="field">
             <option value="original">Nombre original (recomendado)</option>
-            <option value="expediente">Expediente: PROVEEDOR SERIE PACIENTE (ej. COA F401-00074658 PEREZ…)</option>
+            <option value="expediente">Expediente: CLÍNICA SERIE PACIENTE (ej. MACSALUD F011-00149352 TORRES…)</option>
             <option value="serie">Serie-Número (ej. E001-123)</option>
             <option value="ruc_serie">RUC_Serie-Número</option>
             <option value="custom">Personalizado…</option>
           </select>
           <div id="namePatternWrap" class="is-hidden mt-2">
             <input id="namePattern" class="field" value="{fecha}_{ruc}_{serie}" placeholder="{fecha}_{ruc}_{serie}">
-            <p class="hint">Variables: <code>{abrev}</code> (abreviatura del proveedor) <code>{serie}</code> <code>{paciente}</code> <code>{nombre}</code> <code>{ruc}</code> <code>{fecha}</code> <code>{total}</code>. Si un dato no se detecta, se usa el nombre original.</p>
+            <p class="hint">Variables: <code>{abrev}</code> (nombre corto de la clínica) <code>{serie}</code> <code>{paciente}</code> <code>{nombre}</code> <code>{ruc}</code> <code>{fecha}</code> <code>{total}</code>. Si un dato no se detecta, se usa el nombre original.</p>
           </div>
         </div>
         <div class="grid grid-cols-2 gap-3">
@@ -229,13 +251,13 @@
           <div><label class="lbl" for="fileSuffix">Sufijo (opcional)</label><input id="fileSuffix" class="field" placeholder="Ej: _p1"></div>
         </div>
         <div>
-          <label class="lbl" for="mergedName">Nombre del PDF consolidado</label>
-          <input id="mergedName" class="field" value="Facturas_Unificadas.pdf">
+          <label class="lbl" for="mergedName2">Nombre de las facturas unidas <span class="font-normal text-slate-400">(opcional)</span></label>
+          <input id="mergedName2" class="field" placeholder="Automático: FACTURAS UNIDAS + nombre de la clínica">
         </div>
       </div>
 
       <div class="space-y-3">
-        <p class="text-xs font-bold text-slate-500 uppercase tracking-wide">Lectura de datos contables (solo página 1)</p>
+        <p class="text-xs font-bold text-slate-500 uppercase tracking-wide">Lectura de datos contables (página 1 · el paciente se busca en todo el expediente)</p>
         <label class="chk"><input type="checkbox" id="optExtract"><span><b>Extraer datos de la factura</b><small>RUC, razón social, serie-número, fecha, moneda, subtotal, IGV y total. Genera una tabla editable y el Excel.</small></span></label>
         <div id="extractSub" class="pl-6 space-y-2.5 border-l-2 border-slate-100 ml-2">
           <label class="chk"><input type="checkbox" id="optOcr"><span><b>Activar OCR</b> (facturas escaneadas / imagen)<small>Se usa automáticamente cuando la página no tiene texto digital. Descarga ~10 MB la primera vez.</small></span></label>
@@ -263,21 +285,28 @@
       <div id="resStats" class="flex flex-wrap gap-2 text-xs"></div>
     </div>
 
+    <div id="apSummary" class="is-hidden rounded-xl border p-4 text-xs space-y-2"></div>
+
     <div class="rounded-xl border border-blue-200 bg-blue-50/60 p-4 space-y-3">
-      <div>
-        <p class="text-sm font-bold text-blue-950">Todo junto, en orden</p>
-        <p class="text-xs text-blue-900/80 mt-0.5"><b>1</b> Expedientes completos (todas las hojas, tal cual llegaron) · <b>2</b> Facturas de 1 hoja · <b>3</b> PDF consolidado <span id="pkgExcelNote">· y el Excel</span>. Con los nombres elegidos arriba.</p>
+      <div class="flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <p class="text-sm font-bold text-blue-950">Guardar el lote</p>
+          <p class="text-xs text-blue-900/80 mt-0.5">Así quedará dentro de la carpeta que elijas. Solo entran las facturas marcadas en la tabla (columna ✔), ordenadas por número.</p>
+        </div>
+        <label class="chk !text-xs"><input type="checkbox" id="optXlsxRel"><span>Incluir Excel de relación</span></label>
       </div>
+      <div id="treePreview" class="bg-white border border-blue-100 rounded-lg p-3 font-mono text-[11.5px] leading-relaxed text-slate-700 overflow-x-auto custom-scroll"></div>
       <div class="grid gap-3 sm:grid-cols-2">
         <button id="btnSaveFolder" class="btn btn-primary">💾 Guardar en una carpeta…</button>
         <button id="btnDlPack" class="btn btn-ok">📦 Descargar todo (.zip)</button>
       </div>
       <p id="folderHint" class="hint !mt-0"></p>
     </div>
-    <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-      <button id="btnDlFull" class="btn btn-ghost">🗂 Solo expedientes completos (.zip)</button>
+    <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      <button id="btnDlFull" class="btn btn-ghost">🗂 Solo expedientes (.zip)</button>
       <button id="btnDlZip" class="btn btn-ghost">📁 Solo 1ª hojas (.zip)</button>
-      <button id="btnDlMerged" class="btn btn-ghost">📄 Solo PDF consolidado</button>
+      <button id="btnDlMerged" class="btn btn-ghost">📄 Solo facturas unidas</button>
+      <button id="btnDlAprob" class="btn btn-ghost is-hidden">✉️ Solo aprobaciones unidas</button>
       <button id="btnDlExcel" class="btn btn-ghost is-hidden">📊 Excel (.xlsx)</button>
       <button id="btnCopy" class="btn btn-ghost is-hidden">📋 Copiar tabla</button>
     </div>
@@ -293,7 +322,7 @@
       <div class="overflow-auto max-h-[28rem] custom-scroll border border-slate-200 rounded-xl">
         <table class="dt">
           <thead><tr>
-            <th class="sticky-c">N°</th><th>Archivo</th><th>Tipo</th><th>RUC emisor</th><th>Razón social</th><th>Abrev.</th><th>Serie-Número</th><th>Paciente</th><th>Fecha</th><th>Mon.</th><th>Subtotal</th><th>IGV</th><th>Total</th><th>Avisos</th><th>Método</th><th></th>
+            <th class="sticky-c">N°</th><th title="Incluir en el lote">✔</th><th>Archivo</th><th>Tipo</th><th>RUC emisor</th><th>Razón social</th><th>Clínica</th><th>Serie-Número</th><th>Aprobación</th><th>Paciente</th><th>Fecha</th><th>Mon.</th><th>Subtotal</th><th>IGV</th><th>Total</th><th>Avisos</th><th>Método</th><th></th>
           </tr></thead>
           <tbody id="dataBody"></tbody>
         </table>
@@ -934,26 +963,41 @@ function parseInvoice(rawText, rawLines) {
   const cand = segs.find(l => soc.test(normTxt(l)) && !/FACTURA|BOLETA|R\.?U\.?C\b|SE[ÑN]OR|CLIENTE|ADQUIR|DIRECCI/i.test(normTxt(l)) && l.length < 90);
   if (cand) r.razon = cand;
 
-  // --- Paciente / asegurado (facturas de clínicas): valor junto a su etiqueta en la misma línea
-  const PAC = /^(?:NOMBRE\s+DEL\s+PACIENTE|PACIENTE|ASEGURADO|AFILIADO|BENEFICIARIO)\b\s*[:.]?\s*(.*)$/;
-  pac: for (const l of lines) {
+  r.paciente = findPaciente(lines);
+  r.abrev = guessAbrev(T, r.ruc, r.razon, lines);
+  return r;
+}
+
+/* Paciente: valor junto a su etiqueta (PACIENTE / ASEGURADO / AFILIADO / BENEFICIARIO). Nunca el «Titular». */
+const PAC = /^(?:NOMBRE\s+DEL\s+PACIENTE|PACIENTE|ASEGURADO|AFILIADO|BENEFICIARIO)\b\s*[:.]?\s*(.*)$/;
+function findPaciente(lines) {
+  for (const l of lines) {
     const sg = l.split(/\s{3,}/).map(x => x.trim()).filter(Boolean);
     for (let i = 0; i < sg.length; i++) {
       const m = PAC.exec(normTxt(sg[i])); if (!m) continue;
       let v = m[1] ? sg[i].slice(sg[i].length - m[1].length) : (sg[i + 1] || '');   // resto del mismo bloque o el bloque siguiente
       v = v.replace(/[|:;,.\s]+$/, '').replace(/\s+/g, ' ').trim();
-      if (/[A-Za-zÁÉÍÓÚÑáéíóúñ]{2}/.test(v) && v.length >= 4 && v.length <= 80 && !/^(EL MISMO|LA MISMA|-+)$/i.test(v)) { r.paciente = v.toUpperCase(); break pac; }
+      if (/[A-Za-zÁÉÍÓÚÑáéíóúñ]{2}/.test(v) && v.length >= 4 && v.length <= 80 && !/^(EL MISMO|LA MISMA|-+)$/i.test(v) && !/\d{3}/.test(v)) return v.toUpperCase();
     }
   }
-  r.abrev = guessAbrev(T, r.ruc, r.razon);
-  return r;
+  return '';
 }
 
 /* Abreviatura del proveedor para nombrar expedientes (ej. COA). Prioridad: la que el usuario guardó para ese RUC;
    luego el dominio web impreso en la factura (www.coa.pe) si encaja con las iniciales de la razón social; si no, las iniciales. */
 const STOP_W = /^(DE|DEL|LA|LAS|LOS|EL|Y|E|EN|S|A|C|R|L|SAC|SA|SRL|EIRL|SAA|SCRL|S\.A\.C\.?|S\.A\.?|S\.R\.L\.?|E\.I\.R\.L\.?)$/;
-function guessAbrev(T, ruc, razon) {
+function guessAbrev(T, ruc, razon, lines = []) {
   const saved = (store.get('abrevMap', {}) || {})[ruc]; if (saved) return saved;
+  // 1) nombre comercial «CLÍNICA X» del encabezado (antes del bloque del cliente): CLINICA MACSALUD → MACSALUD
+  for (const l of lines.slice(0, 18)) {
+    if (/SE[ÑN]OR|CLIENTE|ADQUIRI?ENTE/i.test(normTxt(l))) break;
+    for (const sg of l.split(/\s{3,}/)) {
+      const m = /(?:^|[^A-Z])CLINICA\s+([A-Z0-9][A-Z0-9 .&'-]{1,60})/.exec(normTxt(sg).replace(/\s+/g, ' '));
+      if (!m) continue;
+      const name = m[1].split(/\s+(?:DE LA|DE LOS|DEL|R\.?\s?U\.?\s?C)\b|\s+(?:S\.?\s?A\.?\s?C|S\.?\s?A\.?\s?A|S\.?\s?R\.?\s?L|E\.?\s?I\.?\s?R\.?\s?L|S\.?\s?A)\b\.?|[,(]/)[0].replace(/[ .-]+$/, '').split(' ').slice(0, 5).join(' ').trim();
+      if (name.length >= 3 && /[A-Z]{3}/.test(name)) return name;
+    }
+  }
   const ini = normTxt(razon || '').replace(/[^A-Z0-9 ]/g, ' ').split(/\s+/).filter(w => w && !STOP_W.test(w)).map(w => w[0]).join('');
   const isSub = (a, b) => { let j = 0; for (const c of b) if (c === a[j]) j++; return a.length > 1 && j === a.length; };
   for (const m of T.matchAll(/WWW\.([A-Z0-9-]{2,20})\.(?:COM\.PE|ORG\.PE|GOB\.PE|EDU\.PE|PE|COM|ORG|NET)\b/g)) {
@@ -969,7 +1013,7 @@ function computeFlags(r) {
   if (!r.ruc) f.push(['Sin RUC', 'warn']); else if (!rucValido(r.ruc)) f.push(['RUC inválido', 'bad']);
   if (!r.serie) f.push(['Sin serie-número', 'warn']);
   if (batch && /\{paciente\}/.test(namePattern(batch.opts)) && !r.paciente) f.push(['Sin paciente', 'warn']);
-  if (batch && /\{abrev\}/.test(namePattern(batch.opts)) && !r.abrev) f.push(['Sin abreviatura', 'warn']);
+  if (batch && /\{abrev\}/.test(namePattern(batch.opts)) && !r.abrev) f.push(['Sin nombre de clínica', 'warn']);
   if (!r.fecha) f.push(['Sin fecha', 'warn']); else if (!parseDMY(r.fecha)) f.push(['Fecha no válida', 'warn']);
   if (r.total == null) f.push(['Sin total', 'warn']);
   else if (r.totalEstimado) f.push(['Total estimado', 'warn']);
@@ -1137,7 +1181,7 @@ $('#btnClearFact').onclick = () => qFact.clear();
 $$('#qFactWrap [data-sort]').forEach(b => b.onclick = () => qFact.sort(b.dataset.sort));
 
 // --- opciones (persistentes)
-const OPT_IDS = ['nameMode', 'namePattern', 'filePrefix', 'fileSuffix', 'mergedName', 'optExtract', 'optOcr', 'optForceOcr', 'optAi'];
+const OPT_IDS = ['nameMode', 'namePattern', 'filePrefix', 'fileSuffix', 'mergedName2', 'optExtract', 'optOcr', 'optForceOcr', 'optAi'];
 function restoreOpts() {
   const s = store.get('opts', {});
   OPT_IDS.forEach(id => { const el = $('#' + id); if (!(id in s)) return; if (el.type === 'checkbox') el.checked = !!s[id]; else el.value = s[id]; });
@@ -1160,7 +1204,7 @@ $('#optAi').addEventListener('change', () => { if ($('#optAi').checked && !getKe
 
 function readOpts() {
   return { mode: $('#nameMode').value, pattern: $('#namePattern').value, prefix: $('#filePrefix').value.trim(), suffix: $('#fileSuffix').value.trim(),
-    mergedName: $('#mergedName').value.trim(), extract: $('#optExtract').checked, ocr: $('#optOcr').checked, forceOcr: $('#optForceOcr').checked,
+    mergedName: $('#mergedName2').value.trim(), extract: $('#optExtract').checked, ocr: $('#optOcr').checked, forceOcr: $('#optForceOcr').checked,
     ai: $('#optAi').checked && !!getKey() };
 }
 const namePattern = o => o.mode === 'serie' ? '{serie}' : o.mode === 'ruc_serie' ? '{ruc}_{serie}' : o.mode === 'expediente' ? '{abrev} {serie} {paciente}' : (o.pattern || '{nombre}');
@@ -1176,7 +1220,10 @@ function buildOutName(it, o) {
   }
   return ensurePdfExt(o.prefix + name + o.suffix, base + '.pdf');
 }
-function computeOutNames() { const used = new Set(); batch.items.forEach(it => { if (it.singleBytes) it.outName = uniqueName(buildOutName(it, batch.opts), used); }); }
+function computeOutNames() {
+  const used = new Set(), first = typeof lotItems === 'function' ? lotItems() : [], rest = batch.items.filter(it => !first.includes(it));
+  [...first, ...rest].forEach(it => { if (it.singleBytes) it.outName = uniqueName(buildOutName(it, batch.opts), used); });
+}
 
 // --- análisis de la 1ª página
 async function analyzeFirstPage(buf, o, setStatus) {
@@ -1193,6 +1240,19 @@ async function analyzeFirstPage(buf, o, setStatus) {
       lines = text.split(/\n/).map(l => l.trim()).filter(Boolean); method = 'OCR';
     } else if (scanned && !o.ai) notas.push('Página escaneada: activa OCR o IA');
     let r = parseInvoice(text, lines); r.notas.push(...notas);
+    if (!r.paciente && pdf.numPages > 1) {                                 // el paciente suele estar en la liquidación (hoja 2, 3…)
+      let ocrDone = 0;
+      for (let p = 2; p <= Math.min(pdf.numPages, 8) && !r.paciente; p++) {
+        setStatus(`Buscando el paciente en la hoja ${p}…`);
+        const pg = await pdf.getPage(p); let ls = await pageTextLines(pg);
+        if (ls.join('').replace(/\s/g, '').length < 25) {
+          if (!o.ocr || ocrDone >= 2) continue;
+          ocrLog = m => { if (m.status === 'recognizing text') setStatus(`OCR hoja ${p}: ${Math.round(m.progress * 100)}%`); };
+          ls = (await ocrCanvas(await renderPage(pg, { maxSide: 2400 }))).split(/\n/).map(x => x.trim()).filter(Boolean); ocrDone++;
+        }
+        const v = findPaciente(ls); if (v) { r.paciente = v; r.pacHoja = p; }
+      }
+    }
     if (o.ai && (text.length > 10 || getAiImage())) {
       try {
         setStatus('Consultando IA Gemini…');
@@ -1210,12 +1270,12 @@ async function processInvoices() {
   if (busyFact || !qFact.items.length) return;
   const o = readOpts(); saveOpts();
   if (o.mode !== 'original') o.extract = true;
+  if (AP.list.length) o.extract = true;                                  // para cruzar con las aprobaciones hace falta la serie-número
   busyFact = true; $('#btnProcess').disabled = true; show($('#resFact'), false);
   qFact.items.forEach(i => { i.status = 'idle'; i.error = ''; }); qFact.render();
   progFact.start('Iniciando…');
   const items = [], errors = [];
-  const merged = await PDFLib.PDFDocument.create();
-  let mergedCount = 0, cancelled = false;
+  let cancelled = false;
   const list = [...qFact.items], total = list.length;
   try {
     for (let i = 0; i < total; i++) {
@@ -1231,7 +1291,6 @@ async function processInvoices() {
         if (src.getPageCount() < 1) throw new Error('El PDF no tiene páginas');
         const single = await subsetDoc(src, [0]);                       // copia directa de la página 1, sin recomprimir
         rec.singleBytes = await single.save();
-        const [pg] = await merged.copyPages(single, [0]); merged.addPage(pg); mergedCount++;
         if (o.extract) {
           try { rec.row = await analyzeFirstPage(buf, o, msg => progFact.text(`${msg} ${label}`)); }
           catch (ex) { rec.row = { tipo: '', ruc: '', rucCliente: '', razon: '', paciente: '', abrev: '', serie: '', fecha: '', moneda: '', subtotal: null, igv: null, total: null, notas: [], metodo: 'Error', error: 'Error de lectura: ' + (ex.message || ex) }; }
@@ -1243,10 +1302,9 @@ async function processInvoices() {
       }
       items.push(rec); qFact.renderSoon();
     }
-    progFact.set(100, 'Generando PDF consolidado…'); await tick();
-    const mergedBlob = mergedCount ? pdfBlob(await merged.save()) : null;
-    batch = { items, opts: o, mergedBlob, errors, cancelled, total };
-    renderResults();
+    progFact.set(100, 'Cruzando…'); await tick();
+    batch = { items, opts: o, errors, cancelled, total };
+    applyApprovals(); renderResults();
     if (cancelled) toast('Proceso cancelado: se conservó lo ya procesado', 'warn');
     else toast(`Listo: ${items.length} de ${total} facturas procesadas`, errors.length ? 'warn' : 'ok');
   } catch (ex) {
@@ -1278,13 +1336,12 @@ function renderResults() {
   $('#resStats').innerHTML = statChip(`✔ ${b.items.length} procesados`, 'b-ok') + (o.extract && warn ? statChip(`⚠ ${warn} con avisos`, 'b-warn') : '') + (b.errors.length ? statChip(`✖ ${b.errors.length} con error`, 'b-bad') : '');
   const eb = $('#errBox'); show(eb, b.errors.length > 0);
   eb.innerHTML = b.errors.length ? `<b>Archivos con problemas:</b><ul class="list-disc pl-5 mt-1 space-y-0.5">${b.errors.map(e => `<li><b>${esc(e.name)}</b> — ${esc(e.msg)}</li>`).join('')}</ul>` : '';
-  $('#btnDlZip').disabled = !b.items.length; $('#btnDlMerged').disabled = !b.mergedBlob;
-  ['btnDlFull', 'btnDlPack', 'btnSaveFolder'].forEach(id => $('#' + id).disabled = !b.items.length);
-  show($('#pkgExcelNote'), o.extract && rows.length > 0);
-  $('#folderHint').textContent = window.showDirectoryPicker ? 'Eliges la carpeta y se crean dentro las subcarpetas «1 Expedientes completos» y «2 Facturas 1ra hoja», más el consolidado. Si un archivo ya existe, se guarda como «(2)», nunca se sobrescribe.' : 'Tu navegador no permite guardar directo en una carpeta: usa «Descargar todo (.zip)» o abre la página en Microsoft Edge o Google Chrome.';
+  $('#folderHint').textContent = window.showDirectoryPicker ? 'Eliges tu carpeta y la app crea adentro lo que ves arriba. Si un archivo ya existe, se guarda como «(2)»: nunca se sobrescribe nada.' : 'Tu navegador no permite guardar directo en una carpeta: usa «Descargar todo (.zip)» o abre la página en Microsoft Edge o Google Chrome.';
+  $('#optXlsxRel').disabled = !o.extract;
   show($('#btnDlExcel'), o.extract && rows.length > 0); show($('#btnCopy'), o.extract && rows.length > 0);
   show($('#dataWrap'), o.extract && rows.length > 0);
   if (o.extract) { renderTable(); updateTotals(); }
+  renderLot();
   if (typeof tdRender === 'function' && TD.invs.length) tdRender();
   $('#resFact').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
@@ -1295,15 +1352,18 @@ function renderTable() {
   $('#dataBody').innerHTML = rows.map((it, n) => {
     const r = it.row, cell = (f, cls = '') => `<td><input class="cell ${cls}" data-f="${f}" value="${esc(r[f])}" aria-label="${f}"></td>`;
     const amt = f => `<td><input class="cell num" data-f="${f}" value="${r[f] == null ? '' : r[f].toFixed(2)}" inputmode="decimal" aria-label="${f}"></td>`;
-    return `<tr data-id="${it.id}" class="${rowClass(r)}">
+    return `<tr data-id="${it.id}" class="${rowClass(r)}${it.incluir ? '' : ' excl'}">
       <td class="sticky-c text-slate-400 text-center bg-white">${n + 1}</td>
+      <td class="text-center"><input type="checkbox" data-act="inc" ${it.incluir ? 'checked' : ''} aria-label="Incluir en el lote" class="w-4 h-4 accent-blue-600"></td>
       <td class="max-w-[14rem]"><div class="truncate font-medium px-1" title="${esc(it.name)}">${esc(it.name)}</div></td>
-      ${cell('tipo')}${cell('ruc', 'mono')}${cell('razon')}${cell('abrev', 'font-bold')}${cell('serie', 'mono font-bold')}${cell('paciente')}${cell('fecha')}
+      ${cell('tipo')}${cell('ruc', 'mono')}${cell('razon')}${cell('abrev', 'font-bold')}${cell('serie', 'mono font-bold')}
+      <td data-role="ap" class="min-w-[8rem]">${apBadge(it)}</td>
+      ${cell('paciente')}${cell('fecha')}
       <td><select class="cell" data-f="moneda" aria-label="moneda">${['PEN', 'USD', 'EUR'].map(m => `<option ${r.moneda === m ? 'selected' : ''}>${m}</option>`).join('')}</select></td>
       ${amt('subtotal')}${amt('igv')}${amt('total')}
       <td data-role="flags" class="min-w-[9rem]">${flagsHtml(r)}</td>
       <td><span class="badge b-gray">${esc(r.metodo || '')}</span></td>
-      <td><button class="btn btn-ghost btn-xs" data-act="pv" title="Ver 1ª hoja" aria-label="Ver 1ª hoja">👁</button></td></tr>`;
+      <td class="whitespace-nowrap"><button class="btn btn-ghost btn-xs" data-act="pv" title="Ver expediente" aria-label="Ver expediente">👁</button> <button class="btn btn-danger btn-xs" data-act="rm" title="Quitar esta factura del lote" aria-label="Quitar">✕</button></td></tr>`;
   }).join('');
 }
 $('#dataBody').addEventListener('input', e => {
@@ -1320,10 +1380,22 @@ $('#dataBody').addEventListener('input', e => {
   if (f === 'paciente') r.paciente = el.value.toUpperCase();
   tr.className = rowClass(r); tr.querySelector('[data-role=flags]').innerHTML = flagsHtml(r); updateTotals();
 });
-$('#dataBody').addEventListener('click', e => { const b = e.target.closest('[data-act=pv]'); if (b) openPreview(batch.items.find(x => x.id === +b.closest('tr').dataset.id).file, 1); });
+$('#dataBody').addEventListener('click', e => {
+  const b = e.target.closest('[data-act]'); if (!b) return;
+  const it = batch.items.find(x => x.id === +b.closest('tr').dataset.id); if (!it) return;
+  if (b.dataset.act === 'pv') openPreview(it.file, 1);
+  else if (b.dataset.act === 'rm') removeFromLot(it);
+});
+$('#dataBody').addEventListener('change', e => {
+  const el = e.target, tr = el.closest('tr'); if (!tr) return;
+  const it = batch.items.find(x => x.id === +tr.dataset.id); if (!it) return;
+  if (el.dataset.act === 'inc') { it.incManual = el.checked; it.incluir = el.checked; tr.classList.toggle('excl', !el.checked); renderLot(); }
+  else if (el.dataset.f === 'serie') { applyApprovals(); renderTable(); renderLot(); }      // otra serie → otro cruce
+  else if (el.dataset.f) renderLot();
+});
 $('#dataFilter').addEventListener('input', e => {
   const q = normTxt(e.target.value.trim());
-  $$('#dataBody tr').forEach(tr => { const it = batch.items.find(x => x.id === +tr.dataset.id), r = it.row; tr.style.display = !q || normTxt([it.name, r.ruc, r.razon, r.serie, r.fecha, r.tipo, r.paciente, r.abrev].join(' ')).includes(q) ? '' : 'none'; });
+  $$('#dataBody tr').forEach(tr => { const it = batch.items.find(x => x.id === +tr.dataset.id), r = it.row; tr.style.display = !q || normTxt([it.name, r.ruc, r.razon, r.serie, r.fecha, r.tipo, r.paciente, r.abrev, it.ap ? it.ap.status : ''].join(' ')).includes(q) ? '' : 'none'; });
 });
 
 // --- descargas
@@ -1331,19 +1403,50 @@ $('#btnDlZip').onclick = async () => {
   if (!batch) return; const b = $('#btnDlZip'); b.disabled = true;
   try {
     progDl.start('Empaquetando ZIP…'); computeOutNames(); const zip = new JSZip();
-    batch.items.forEach(it => it.singleBytes && zip.file(it.outName, it.singleBytes, { binary: true }));
+    if (!lotItems().length) throw new Error('No hay facturas marcadas para incluir');
+    lotItems().forEach(it => zip.file(it.outName, it.singleBytes, { binary: true }));
     const blob = await zip.generateAsync({ type: 'blob', compression: 'STORE' }, m => progDl.set(m.percent, 'Empaquetando ZIP…'));
     download(blob, 'Facturas_1ra_Hoja.zip'); toast('ZIP descargado', 'ok');
   } catch (e) { toast('No se pudo crear el ZIP: ' + (e.message || e), 'bad'); } finally { progDl.hide(); b.disabled = false; }
 };
-/* --- Paquete completo: 1 expedientes completos (bytes originales, sin tocar), 2 facturas de 1 hoja, 3 consolidado (+ Excel) --- */
-const DIR_FULL = '1 Expedientes completos', DIR_ONE = '2 Facturas 1ra hoja';
-function packEntries({ full = true, one = true, merged = true, excel = true } = {}) {
-  computeOutNames(); const out = [], o = batch.opts;
-  if (full) batch.items.forEach(it => it.singleBytes && out.push({ dir: DIR_FULL, name: it.outName, data: it.file }));
-  if (one) batch.items.forEach(it => it.singleBytes && out.push({ dir: DIR_ONE, name: it.outName, data: it.singleBytes }));
-  if (merged && batch.mergedBlob) out.push({ dir: '', name: '3 ' + ensurePdfExt(o.mergedName, 'Facturas_Unificadas.pdf'), data: batch.mergedBlob });
-  if (excel && o.extract && window.XLSX && batch.items.some(i => i.row)) out.push({ dir: '', name: '4 ' + excelName(), data: new Blob([XLSX.write(buildExcelWb(), { bookType: 'xlsx', type: 'array', cellDates: true })]) });
+/* --- Lote: EXPEDIENTES/ (originales completos) · 1ª hojas sueltas · PARA RELACION/ (facturas unidas + aprobaciones unidas + Excel) --- */
+const DIR_EXP = 'EXPEDIENTES', DIR_REL = 'PARA RELACION';
+const keyOrder = it => { const k = keyOfRow(it.row); if (!k) return null; const [se, nu] = k.split('-'); return [se, +nu]; };
+function lotItems() {                                                    // incluidas, ordenadas por serie y número
+  const inc = batch.items.filter(it => it.singleBytes && it.incluir);
+  return inc.map((it, i) => ({ it, i, k: keyOrder(it) })).sort((a, b) => !a.k || !b.k ? (!a.k - !b.k) || a.i - b.i : a.k[0].localeCompare(b.k[0]) || a.k[1] - b.k[1]).map(x => x.it);
+}
+function lotClinic() {                                                   // nombre de la clínica más frecuente en el lote
+  const c = {}; lotItems().forEach(it => { const a = (it.row?.abrev || '').trim(); if (a) c[a] = (c[a] || 0) + 1; });
+  return Object.entries(c).sort((a, b) => b[1] - a[1])[0]?.[0] || '';
+}
+const lotNames = () => { const c = lotClinic(), custom = batch.opts.mergedName.trim();
+  return { fac: ensurePdfExt(custom || `FACTURAS UNIDAS ${c}`.trim(), 'FACTURAS UNIDAS.pdf'), ap: ensurePdfExt(`APROBACIONES UNIDAS ${c}`.trim(), 'APROBACIONES UNIDAS.pdf'), xl: sanitizeName(`RELACION ${c}`.trim()) + '.xlsx' }; };
+const cacheGet = (k, sig) => batch[k] && batch[k].sig === sig ? batch[k].blob : null;
+async function buildMergedLot(items = lotItems()) {
+  const sig = items.map(i => i.id).join(','), hit = cacheGet('_mergedC', sig); if (hit) return hit;
+  const out = await PDFLib.PDFDocument.create();
+  for (const it of items) { const d = await PDFLib.PDFDocument.load(it.singleBytes); const [pg] = await out.copyPages(d, [0]); out.addPage(pg); }
+  const blob = pdfBlob(await out.save()); batch._mergedC = { sig, blob }; return blob;
+}
+function apOrdered() {                                                   // primero el correo con la factura de número más bajo
+  const low = ap => ap.facturas.map(f => [f.serie, +f.num]).sort((a, b) => a[0].localeCompare(b[0]) || a[1] - b[1])[0] || ['~', 0];
+  return [...AP.list].sort((a, b) => { const x = low(a), y = low(b); return x[0].localeCompare(y[0]) || x[1] - y[1]; });
+}
+async function buildAprobMerged() {
+  const list = apOrdered(), sig = list.map(a => a.id).join(','), hit = cacheGet('_apC', sig); if (hit) return hit;
+  const out = await PDFLib.PDFDocument.create();
+  for (const ap of list) { const d = await loadLib(await ap.file.arrayBuffer()); (await out.copyPages(d, d.getPageIndices())).forEach(pg => out.addPage(pg)); }
+  const blob = pdfBlob(await out.save()); batch._apC = { sig, blob }; return blob;
+}
+async function packEntries({ full = true, one = true, merged = true, aprob = true, excel = null } = {}) {
+  computeOutNames(); const out = [], items = lotItems(), n = lotNames();
+  if (excel === null) excel = $('#optXlsxRel').checked && batch.opts.extract;
+  if (full) items.forEach(it => out.push({ dir: DIR_EXP, name: it.outName, data: it.file }));
+  if (one) items.forEach(it => out.push({ dir: '', name: it.outName, data: it.singleBytes }));
+  if (merged && items.length) { progDl.text('Uniendo facturas…'); out.push({ dir: DIR_REL, name: n.fac, data: await buildMergedLot(items) }); }
+  if (aprob && AP.list.length) { progDl.text('Uniendo aprobaciones…'); out.push({ dir: DIR_REL, name: n.ap, data: await buildAprobMerged() }); }
+  if (excel && window.XLSX && items.some(i => i.row)) out.push({ dir: DIR_REL, name: n.xl, data: new Blob([XLSX.write(buildExcelWb(true), { bookType: 'xlsx', type: 'array', cellDates: true })]) });
   return out;
 }
 async function zipEntries(entries, zipName, label) {
@@ -1357,16 +1460,19 @@ async function withDl(btn, fn) {
   try { await fn(); } catch (e) { if (e?.name !== 'AbortError') toast('No se pudo completar: ' + (e.message || e), 'bad', 7000); }
   finally { progDl.hide(); btn.disabled = false; }
 }
-$('#btnDlPack').onclick = () => withDl($('#btnDlPack'), async () => { await zipEntries(packEntries(), 'Expedientes_y_Facturas.zip', 'Empaquetando todo…'); toast('ZIP con todo descargado', 'ok'); });
-$('#btnDlFull').onclick = () => withDl($('#btnDlFull'), async () => { await zipEntries(packEntries({ one: false, merged: false, excel: false }).map(e => ({ ...e, dir: '' })), 'Expedientes_completos.zip', 'Empaquetando expedientes…'); toast('Expedientes completos descargados', 'ok'); });
+const lotGuard = () => { if (!lotItems().length) { toast('No hay facturas marcadas para incluir en el lote', 'warn'); return false; } return true; };
+$('#btnDlPack').onclick = () => withDl($('#btnDlPack'), async () => { if (!lotGuard()) return; progDl.start('Preparando…'); await zipEntries(await packEntries(), `${sanitizeName(lotClinic() || 'Lote')}.zip`, 'Empaquetando todo…'); toast('ZIP con todo descargado', 'ok'); });
+$('#btnDlFull').onclick = () => withDl($('#btnDlFull'), async () => { if (!lotGuard()) return; progDl.start('Preparando…'); await zipEntries((await packEntries({ one: false, merged: false, aprob: false, excel: false })).map(e => ({ ...e, dir: '' })), 'EXPEDIENTES.zip', 'Empaquetando expedientes…'); toast('Expedientes descargados', 'ok'); });
+$('#btnDlAprob').onclick = () => withDl($('#btnDlAprob'), async () => { progDl.start('Uniendo aprobaciones…'); download(await buildAprobMerged(), lotNames().ap); toast('Aprobaciones unidas descargadas', 'ok'); });
 async function freeName(dir, name) {                                      // nunca sobrescribe: «nombre (2).pdf»
   const dot = name.lastIndexOf('.'), b = dot > 0 ? name.slice(0, dot) : name, x = dot > 0 ? name.slice(dot) : '';
   for (let i = 1; ; i++) { const n = i === 1 ? name : `${b} (${i})${x}`; try { await dir.getFileHandle(n); } catch (e) { if (e.name === 'NotFoundError') return n; throw e; } }
 }
 $('#btnSaveFolder').onclick = () => withDl($('#btnSaveFolder'), async () => {
   if (!window.showDirectoryPicker) return toast('Tu navegador no permite elegir carpeta: usa «Descargar todo (.zip)» o abre la página en Edge/Chrome', 'warn', 7000);
+  if (!lotGuard()) return;
   const root = await window.showDirectoryPicker({ id: 'facturapro', mode: 'readwrite' });
-  const entries = packEntries(), subs = {}; progDl.start('Guardando en la carpeta…');
+  progDl.start('Preparando…'); const entries = await packEntries(), subs = {}; progDl.start('Guardando en la carpeta…');
   for (let i = 0; i < entries.length; i++) {
     const e = entries[i], dir = e.dir ? (subs[e.dir] ||= await root.getDirectoryHandle(e.dir, { create: true })) : root;
     const fh = await dir.getFileHandle(await freeName(dir, e.name), { create: true }), w = await fh.createWritable();
@@ -1375,17 +1481,17 @@ $('#btnSaveFolder').onclick = () => withDl($('#btnSaveFolder'), async () => {
   }
   toast(`Guardado en «${root.name}»: ${entries.length} archivos`, 'ok', 6000);
 });
-$('#btnDlMerged').onclick = () => { if (!batch?.mergedBlob) return; const n = ensurePdfExt(batch.opts.mergedName, 'Facturas_Unificadas.pdf'); download(batch.mergedBlob, n); toast('PDF consolidado descargado', 'ok'); };
-function tableMatrix() {
+$('#btnDlMerged').onclick = () => withDl($('#btnDlMerged'), async () => { if (!lotGuard()) return; progDl.start('Uniendo facturas…'); download(await buildMergedLot(), lotNames().fac); toast('Facturas unidas descargadas', 'ok'); });
+function tableMatrix(onlyLot = false) {
   computeOutNames();
-  return batch.items.filter(i => i.row).map((it, n) => {
-    const r = it.row; return [n + 1, it.name, it.outName || '', r.tipo, r.ruc, r.razon, r.abrev || '', r.rucCliente, r.serie, r.paciente || '', r.fecha, r.moneda, r.subtotal, r.igv, r.total, computeFlags(r).map(f => f[0]).join('; '), r.metodo || ''];
+  return (onlyLot ? lotItems() : batch.items).filter(i => i.row).map((it, n) => {
+    const r = it.row; return [n + 1, it.name, it.outName || '', r.tipo, r.ruc, r.razon, r.abrev || '', r.rucCliente, r.serie, r.paciente || '', r.fecha, r.moneda, r.subtotal, r.igv, r.total, apText(it), it.incluir ? 'Sí' : 'No', computeFlags(r).map(f => f[0]).join('; '), r.metodo || ''];
   });
 }
-const XL_HEAD = ['N°', 'Archivo original', 'Archivo generado', 'Tipo', 'RUC emisor', 'Razón social', 'Abreviatura', 'RUC cliente', 'Serie-Número', 'Paciente', 'Fecha emisión', 'Moneda', 'Subtotal', 'IGV', 'Total', 'Avisos', 'Método'];
+const XL_HEAD = ['N°', 'Archivo original', 'Archivo generado', 'Tipo', 'RUC emisor', 'Razón social', 'Clínica', 'RUC cliente', 'Serie-Número', 'Paciente', 'Fecha emisión', 'Moneda', 'Subtotal', 'IGV', 'Total', 'Aprobación', 'Incluida', 'Avisos', 'Método'];
 const XL_DATE = XL_HEAD.indexOf('Fecha emisión'), XL_AMT = ['Subtotal', 'IGV', 'Total'].map(h => XL_HEAD.indexOf(h));
-function buildExcelWb() {
-  const body = tableMatrix().map(row => row.map((v, c) => {
+function buildExcelWb(onlyLot = false) {
+  const body = tableMatrix(onlyLot).map(row => row.map((v, c) => {
     if (c === XL_DATE) { const d = parseDMY(v); return d ? new Date(d.y, d.m - 1, d.d, 12) : v; }   // fecha real de Excel
     return v === null ? '' : v;
   }));
@@ -1394,7 +1500,7 @@ function buildExcelWb() {
     if (row[XL_DATE] instanceof Date) ws[XLSX.utils.encode_cell({ r: i + 1, c: XL_DATE })].z = 'dd/mm/yyyy';
     XL_AMT.forEach(c => { const cell = ws[XLSX.utils.encode_cell({ r: i + 1, c })]; if (cell && cell.t === 'n') cell.z = '#,##0.00'; });
   });
-  ws['!cols'] = [5, 34, 44, 14, 14, 36, 10, 14, 16, 34, 12, 8, 12, 12, 13, 40, 16].map(w => ({ wch: w }));
+  ws['!cols'] = [5, 34, 50, 12, 14, 36, 22, 14, 16, 34, 12, 8, 12, 12, 13, 40, 9, 40, 16].map(w => ({ wch: w }));
   ws['!autofilter'] = { ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: body.length, c: XL_HEAD.length - 1 } }) };
   const t = totalsByCurrency();
   const ws2 = XLSX.utils.aoa_to_sheet([['Moneda', 'Comprobantes', 'Total'], ...Object.entries(t).map(([k, v]) => [k, v.n, Math.round(v.total * 100) / 100])]);
@@ -1415,6 +1521,147 @@ $('#btnCopy').onclick = async () => {
   catch { const ta = document.createElement('textarea'); ta.value = tsv; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); }
   toast('Tabla copiada: pégala en Excel o Google Sheets', 'ok');
 };
+
+
+/* =====================================================================
+   CORREOS DE APROBACIÓN: lectura, cruce con las facturas y resumen del lote
+   ===================================================================== */
+const AP = { list: [] }; let AP_UID = 0;
+const OBS_W = /OBSERV|REGULARIZ|DESCONTAR|NO PROCEDE|RECHAZ|ANULA|CORREGIR|REFACTUR|SUBSANA|DEVOLV|DEVUELV|NO CORRESPONDE|FALTA|PENDIENTE DE|NO SE AUTORIZA|EXCESO/;
+const OK_W = /PROCEDER|PROCEDE\b|APROBAD|CONFORME|TRAMITE CORRESPONDIENTE|CONTINUAR|AUTORIZAD|VALIDAD|PAGAR|OK\b/;
+function parseAprobacion(lines) {
+  const facts = new Map(), rucs = new Set(), adj = []; let obsSec = false, asunto = '';
+  const reF = /(?:FACTURA|FACT\.?|BOLETA|COMPROBANTE|DOCUMENTO)\s*(?:ELECTRONICA\s*)?(?:N[°ºO]?\.?\s*)?([A-Z][A-Z0-9]{3})\s*[-–—]\s*(\d{1,10})\b\s*[:\-–.]?\s*(.*)$/;
+  const reB = /^[\s\-•*·>\d.)]*([FEB][A-Z0-9]{3})\s*[-–—]\s*(\d{1,10})\b\s*[:\-–]\s*(.+)$/;
+  for (const raw of lines) {
+    const L = normTxt(raw).replace(/\s+/g, ' ').trim();
+    for (const m of raw.matchAll(/(\d{11})_\d{2}_([A-Z0-9]{4})_(\d{1,10})\.pdf/gi)) { rucs.add(m[1]); adj.push(tdKey(m[2], m[3])); }
+    if (!asunto) { const a = /^ASUNTO:\s*(.+)$/.exec(L) || /^RV:\s*(.+)$/.exec(L); if (a) asunto = raw.replace(/^.*?(?:Asunto:|RV:)\s*/i, '').replace(/^(?:RV|RE|FW|FWD):\s*/i, '').trim(); }
+    const m = reF.exec(L) || reB.exec(L);
+    if (!m) { if (/OBSERVAD|OBSERVACION/.test(L)) obsSec = true; else if (/EVALUAR|CONCLUSION|APROBAD|CONFORMIDAD/.test(L)) obsSec = false; continue; }
+    if (!/\d/.test(m[1])) continue;
+    const key = tdKey(m[1], m[2]); if (facts.has(key)) continue;            // el primero es el mensaje más reciente del hilo
+    const motivo = raw.replace(/^.*?[A-Z][A-Z0-9]{3}\s*[-–—]\s*\d{1,10}\s*[:\-–.]?\s*/i, '').replace(/\s+/g, ' ').trim();
+    const st = OBS_W.test(m[3]) ? 'observada' : OK_W.test(m[3]) ? 'aprobada' : obsSec ? 'observada' : 'revisar';
+    facts.set(key, { key, serie: m[1], num: m[2], status: st, motivo });
+  }
+  // correo sin detalle por factura pero con aprobación general de los adjuntos
+  if (!facts.size && adj.length && OK_W.test(normTxt(lines.join(' '))) && !OBS_W.test(normTxt(lines.join(' '))))
+    adj.forEach(k => { const [se, nu] = k.split('-'); facts.set(k, { key: k, serie: se, num: nu, status: 'aprobada', motivo: 'Aprobación general de los adjuntos del correo' }); });
+  return { facturas: [...facts.values()], rucs: [...rucs], asunto };
+}
+async function readAprobacion(file) {
+  const pdf = await openPdfJs(file); let lines = [];
+  try {
+    for (let p = 1; p <= pdf.numPages; p++) lines.push(...await pageTextLines(await pdf.getPage(p)));
+    if (lines.join('').replace(/\s/g, '').length < 30 && $('#optOcr').checked)
+      for (let p = 1; p <= Math.min(pdf.numPages, 4); p++) lines.push(...(await ocrCanvas(await renderPage(await pdf.getPage(p), { maxSide: 2400 }))).split(/\n/));
+    return { pages: pdf.numPages, ...parseAprobacion(lines), scanned: lines.join('').replace(/\s/g, '').length < 30 };
+  } finally { try { pdf.destroy(); } catch {} }
+}
+async function apAdd(files) {
+  const pdfs = [...files].filter(isPdf); let added = 0, dup = 0;
+  for (const f of pdfs) {
+    if (AP.list.some(a => a.file.name === f.name && a.file.size === f.size)) { dup++; continue; }
+    const ap = { id: ++AP_UID, file: f, name: f.name, loading: true, facturas: [], rucs: [], pages: 0 }; AP.list.push(ap); apRender();
+    try { Object.assign(ap, await readAprobacion(f)); } catch (e) { ap.error = 'No se pudo leer: ' + (e.message || e); }
+    ap.loading = false; added++; apRender();
+  }
+  if (pdfs.length < files.length) toast('Solo se aceptan PDF de aprobación', 'warn');
+  if (dup) toast(`${dup} correo(s) ya estaban cargados`, 'warn');
+  if (added) toast(`${added} correo(s) de aprobación leídos`, 'ok');
+  await disposeOcr(); apChanged();
+}
+function apChanged() { if (batch) { applyApprovals(); if (batch.opts.extract) renderTable(); renderLot(); } apRender(); }
+const ST = { aprobada: ['✔ Aprobada', 'b-ok'], observada: ['⛔ Observada', 'b-bad'], revisar: ['❓ Revisar', 'b-warn'], sin: ['⚠ Sin aprobación', 'b-warn'] };
+function apRender() {
+  show($('#apWrap'), AP.list.length > 0);
+  const tot = AP.list.reduce((t, a) => { a.facturas.forEach(f => t[f.status] = (t[f.status] || 0) + 1); return t; }, {});
+  $('#apCount').textContent = AP.list.length ? `${AP.list.length} correo(s) · ${tot.aprobada || 0} aprobadas · ${tot.observada || 0} observadas` : '';
+  $('#apList').innerHTML = AP.list.map(a => {
+    const c = s => a.facturas.filter(f => f.status === s).length;
+    const chips = a.loading ? '<span class="badge b-blue"><span class="spin"></span> Leyendo…</span>' : a.error ? `<span class="badge b-bad">${esc(a.error)}</span>`
+      : !a.facturas.length ? `<span class="badge b-warn">${a.scanned ? 'Escaneado: activa OCR y vuelve a subirlo' : 'No encontré facturas en este correo'}</span>`
+      : [['aprobada', 'aprobadas'], ['observada', 'observadas'], ['revisar', 'por revisar']].filter(([s]) => c(s)).map(([s, t]) => `<span class="badge ${ST[s][1]}">${ST[s][0].split(' ')[0]} ${c(s)} ${t}</span>`).join(' ');
+    const det = a.facturas.length ? `<details class="w-full"><summary>Ver facturas del correo</summary><ul class="mt-1.5 space-y-0.5 text-[11px]">${a.facturas.map(f => `<li><span class="badge ${ST[f.status][1]}">${ST[f.status][0]}</span> <b class="mono">${esc(f.serie)}-${esc(f.num)}</b> <span class="text-slate-500">${esc(f.motivo.slice(0, 160))}</span></li>`).join('')}</ul></details>` : '';
+    return `<div class="aprow" data-ap="${a.id}"><span class="text-lg">✉️</span><div class="min-w-0 flex-1"><div class="text-xs font-semibold truncate" title="${esc(a.name)}">${esc(a.name)}</div><div class="text-[11px] text-slate-500">${a.pages ? a.pages + ' hoja(s)' : ''}${a.asunto ? ' · ' + esc(a.asunto) : ''}${a.rucs.length ? ' · RUC ' + esc(a.rucs.join(', ')) : ''}</div></div>
+      <div class="flex flex-wrap gap-1">${chips}</div><button class="btn btn-ghost btn-xs" data-apact="pv" title="Ver correo">👁</button><button class="btn btn-danger btn-xs" data-apact="rm" title="Quitar este correo">✕</button>${det}</div>`;
+  }).join('');
+}
+$('#apList').addEventListener('click', e => {
+  const b = e.target.closest('[data-apact]'); if (!b) return;
+  const ap = AP.list.find(a => a.id === +b.closest('[data-ap]').dataset.ap); if (!ap) return;
+  if (b.dataset.apact === 'pv') openPreview(ap.file, 1); else { AP.list = AP.list.filter(a => a !== ap); apChanged(); }
+});
+$('#btnClearAp').onclick = () => { AP.list = []; apChanged(); };
+bindDrop($('#dzAprob'), $('#inAprob'), f => apAdd(f));
+
+function apMap() {                                                       // factura → estado (si un correo la aprueba y otro la observa, gana la aprobación y se avisa)
+  const map = new Map();
+  for (const ap of AP.list) for (const f of ap.facturas) {
+    const cur = map.get(f.key);
+    if (!cur) map.set(f.key, { ...f, ap, conflict: false });
+    else if (cur.status !== f.status) { const win = cur.status === 'aprobada' ? cur : f.status === 'aprobada' ? { ...f, ap } : cur; map.set(f.key, { ...win, conflict: true }); }
+  }
+  return map;
+}
+function applyApprovals() {
+  if (!batch) return; const map = apMap(), seen = new Map(), has = AP.list.length > 0;
+  for (const it of batch.items) {
+    const k = keyOfRow(it.row); it.dup = null;
+    if (k) { if (seen.has(k)) it.dup = seen.get(k); else seen.set(k, it); }
+    it.ap = has ? (k && map.get(k)) || { status: 'sin' } : null;
+    const def = !it.dup && (!has || it.ap.status === 'aprobada');
+    it.incluir = it.incManual ?? def;
+  }
+}
+const apText = it => it.dup ? 'Duplicada' : !it.ap ? '' : ST[it.ap.status][0].replace(/^\S+\s/, '') + (it.ap.status === 'observada' && it.ap.motivo ? ': ' + it.ap.motivo : '');
+function apBadge(it) {
+  if (it.dup) { const n = batch.items.filter(i => i.row).indexOf(it.dup) + 1; return `<span class="badge b-bad" title="Esta factura ya está en la fila ${n}">⧉ Duplicada (fila ${n})</span>`; }
+  if (!it.ap) return '<span class="text-slate-300">—</span>';
+  const [t, c] = ST[it.ap.status];
+  return `<span class="badge ${c}" title="${esc((it.ap.motivo || '') + (it.ap.ap ? ' · ' + it.ap.ap.name : ''))}">${t}</span>${it.ap.conflict ? ' <span class="badge b-warn" title="Un correo la aprueba y otro la observa">2 correos</span>' : ''}`;
+}
+function removeFromLot(it) {
+  batch.items = batch.items.filter(x => x !== it);
+  const q = qFact.items.find(x => x.id === it.id); if (q) qFact.remove(q.id);
+  applyApprovals(); renderTable(); updateTotals(); renderLot(); toast(`Quitada del lote: ${it.name}`, 'info');
+}
+function renderLot() {
+  if (!batch) return;
+  const items = lotItems(), has = AP.list.length > 0, sm = $('#apSummary');
+  show($('#btnDlAprob'), has);
+  ['btnDlFull', 'btnDlPack', 'btnSaveFolder', 'btnDlZip', 'btnDlMerged'].forEach(id => $('#' + id).disabled = !items.length);
+  // resumen del cruce
+  const map = apMap(), keysPdf = new Set(batch.items.map(i => keyOfRow(i.row)).filter(Boolean));
+  const apSinPdf = [...map.values()].filter(f => f.status === 'aprobada' && !keysPdf.has(f.key));
+  const byStatus = s => batch.items.filter(i => !i.dup && !i.incluir && i.ap?.status === s), dups = batch.items.filter(i => i.dup);
+  const rucs = new Set([...items.map(i => i.row?.ruc).filter(Boolean), ...AP.list.flatMap(a => a.rucs)]);
+  const lines = [];
+  if (has) lines.push(`<div class="flex flex-wrap gap-2">${statChip(`✉️ ${AP.list.length} correo(s)`, 'b-blue')}${statChip(`✔ ${items.length} en el lote`, 'b-ok')}${byStatus('observada').length ? statChip(`⛔ ${byStatus('observada').length} observada(s) fuera`, 'b-bad') : ''}${byStatus('sin').length ? statChip(`⚠ ${byStatus('sin').length} sin aprobación fuera`, 'b-warn') : ''}${apSinPdf.length ? statChip(`📭 ${apSinPdf.length} aprobada(s) sin PDF`, 'b-warn') : ''}</div>`);
+  if (apSinPdf.length) lines.push(`<p><b>Aprobadas en el correo, pero no subiste su PDF:</b> ${apSinPdf.map(f => `<span class="mono font-bold">${esc(f.serie)}-${esc(f.num)}</span>`).join(', ')}</p>`);
+  if (byStatus('observada').length) lines.push(`<p><b>Observadas (no entran al lote):</b> ${byStatus('observada').map(i => `<span class="mono font-bold">${esc(i.row.serie)}</span> <span class="text-slate-500">— ${esc((i.ap.motivo || '').slice(0, 120))}</span>`).join(' · ')}</p>`);
+  if (byStatus('sin').length) lines.push(`<p><b>Sin aprobación en ningún correo (no entran):</b> ${byStatus('sin').map(i => `<span class="mono font-bold">${esc(i.row.serie || i.name)}</span>`).join(', ')}. Si sí corresponde, márcala en la tabla (columna ✔).</p>`);
+  if (dups.length) lines.push(`<p><b>Duplicadas:</b> ${dups.map(i => `<span class="mono font-bold">${esc(i.row.serie)}</span> (${esc(i.name)})`).join(' · ')}. Quítalas con ✕ en la tabla; no hace falta volver a subir nada.</p>`);
+  if (rucs.size > 1) lines.push(`<p class="text-red-700 font-semibold">⚠ Hay más de una clínica en este lote (RUC ${[...rucs].map(esc).join(', ')}). Revisa que no se haya colado un archivo de otra clínica.</p>`);
+  show(sm, lines.length > 0);
+  sm.className = 'rounded-xl border p-4 text-xs space-y-2 ' + (rucs.size > 1 ? 'border-red-200 bg-red-50' : 'border-emerald-200 bg-emerald-50/60') + (lines.length ? '' : ' is-hidden');
+  sm.innerHTML = lines.join('');
+  // vista previa de la carpeta
+  computeOutNames(); const n = lotNames(), xl = $('#optXlsxRel').checked && batch.opts.extract;
+  const list = (arr, ind) => arr.slice(0, 4).map(t => `<div class="tree-row">${ind}${esc(t)}</div>`).join('') + (arr.length > 4 ? `<div class="tree-row tree-dim">${ind}… y ${arr.length - 4} más</div>` : '');
+  const names = items.map(i => i.outName);
+  $('#treePreview').innerHTML = !items.length ? '<span class="tree-dim">No hay facturas marcadas para incluir.</span>' :
+    `<div class="tree-row tree-dir">📁 (tu carpeta)</div>
+     <div class="tree-row tree-dir">├─ 📁 ${DIR_EXP} <span class="tree-dim font-normal">· ${items.length} expediente(s) completos, originales</span></div>${list(names, '│&nbsp;&nbsp;&nbsp;&nbsp;')}
+     <div class="tree-row">├─ 📄 <span class="tree-dim">${items.length} factura(s) de 1 hoja, con el mismo nombre:</span></div>${list(names, '│&nbsp;&nbsp;&nbsp;&nbsp;')}
+     <div class="tree-row tree-dir">└─ 📁 ${DIR_REL}</div>
+     <div class="tree-row">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;${esc(n.fac)} <span class="tree-dim">· ${items.length} hoja(s)</span></div>
+     ${has ? `<div class="tree-row">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;${esc(n.ap)} <span class="tree-dim">· ${AP.list.length} correo(s), todas sus hojas</span></div>` : ''}
+     ${xl ? `<div class="tree-row">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;${esc(n.xl)}</div>` : ''}`;
+}
+$('#optXlsxRel').checked = store.get('xlsxRel', true);
+$('#optXlsxRel').addEventListener('change', () => { store.set('xlsxRel', $('#optXlsxRel').checked); renderLot(); });
 
 /* =====================================================================
    PESTAÑA 2 · UNIR PDFs
