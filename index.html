@@ -235,8 +235,8 @@
         <div>
           <label class="lbl" for="nameMode">Nombre de cada PDF individual</label>
           <select id="nameMode" class="field">
-            <option value="original">Nombre original (recomendado)</option>
-            <option value="expediente">Expediente: CLÍNICA SERIE PACIENTE (ej. MACSALUD F011-00149352 TORRES…)</option>
+            <option value="expediente" selected>Expediente: CLÍNICA SERIE PACIENTE (recomendado)</option>
+            <option value="original">Nombre original del archivo</option>
             <option value="serie">Serie-Número (ej. E001-123)</option>
             <option value="ruc_serie">RUC_Serie-Número</option>
             <option value="custom">Personalizado…</option>
@@ -1012,7 +1012,7 @@ function computeFlags(r) {
   if (r.error) f.push([r.error, 'bad']);
   if (!r.ruc) f.push(['Sin RUC', 'warn']); else if (!rucValido(r.ruc)) f.push(['RUC inválido', 'bad']);
   if (!r.serie) f.push(['Sin serie-número', 'warn']);
-  if (batch && /\{paciente\}/.test(namePattern(batch.opts)) && !r.paciente) f.push(['Sin paciente', 'warn']);
+  if (batch && /\{paciente\}/.test(namePattern(batch.opts)) && !r.paciente) f.push(['Sin paciente: escríbelo aquí', 'warn']);
   if (batch && /\{abrev\}/.test(namePattern(batch.opts)) && !r.abrev) f.push(['Sin nombre de clínica', 'warn']);
   if (!r.fecha) f.push(['Sin fecha', 'warn']); else if (!parseDMY(r.fecha)) f.push(['Fecha no válida', 'warn']);
   if (r.total == null) f.push(['Sin total', 'warn']);
@@ -1184,6 +1184,7 @@ $$('#qFactWrap [data-sort]').forEach(b => b.onclick = () => qFact.sort(b.dataset
 const OPT_IDS = ['nameMode', 'namePattern', 'filePrefix', 'fileSuffix', 'mergedName2', 'optExtract', 'optOcr', 'optForceOcr', 'optAi'];
 function restoreOpts() {
   const s = store.get('opts', {});
+  if (store.get('optsV', 1) < 2) { if (s.nameMode === 'original') s.nameMode = 'expediente'; store.set('optsV', 2); }
   OPT_IDS.forEach(id => { const el = $('#' + id); if (!(id in s)) return; if (el.type === 'checkbox') el.checked = !!s[id]; else el.value = s[id]; });
 }
 function saveOpts() { const s = {}; OPT_IDS.forEach(id => { const el = $('#' + id); s[id] = el.type === 'checkbox' ? el.checked : el.value; }); store.set('opts', s); }
@@ -1215,7 +1216,8 @@ function buildOutName(it, o) {
     const pat = namePattern(o);
     let missing = false;
     const v = { nombre: base, ruc: r.ruc, serie: r.serie, fecha: (r.fecha || '').replace(/\//g, '-'), total: r.total != null ? r.total.toFixed(2) : '', abrev: (r.abrev || '').trim(), paciente: (r.paciente || '').trim() };
-    name = pat.replace(/\{(\w+)\}/g, (_, k) => { const x = v[k]; if (x === undefined || x === '') { missing = true; return ''; } return x; });
+    name = pat.replace(/\{(\w+)\}/g, (_, k) => { const x = v[k]; if (x === undefined || x === '') { if (k !== 'paciente') missing = true; return ''; } return x; })
+      .replace(/\s{2,}/g, ' ').replace(/[\s_-]+$/, '').replace(/^[\s_-]+/, '');
     if (missing || !sanitizeName(name).replace(/[-_ ]/g, '')) name = base;
   }
   return ensurePdfExt(o.prefix + name + o.suffix, base + '.pdf');
@@ -1246,7 +1248,7 @@ async function analyzeFirstPage(buf, o, setStatus) {
         setStatus(`Buscando el paciente en la hoja ${p}…`);
         const pg = await pdf.getPage(p); let ls = await pageTextLines(pg);
         if (ls.join('').replace(/\s/g, '').length < 25) {
-          if (!o.ocr || ocrDone >= 2) continue;
+          if (ocrDone >= 2 || !(o.ocr || /\{paciente\}/.test(namePattern(o)))) continue;
           ocrLog = m => { if (m.status === 'recognizing text') setStatus(`OCR hoja ${p}: ${Math.round(m.progress * 100)}%`); };
           ls = (await ocrCanvas(await renderPage(pg, { maxSide: 2400 }))).split(/\n/).map(x => x.trim()).filter(Boolean); ocrDone++;
         }
@@ -1572,7 +1574,8 @@ async function apAdd(files) {
   if (added) toast(`${added} correo(s) de aprobación leídos`, 'ok');
   await disposeOcr(); apChanged();
 }
-function apChanged() { if (batch) { applyApprovals(); if (batch.opts.extract) renderTable(); renderLot(); } apRender(); }
+function apChanged() {
+  if (AP.list.length && $('#nameMode').value === 'original') { $('#nameMode').value = 'expediente'; syncOptsUi(); saveOpts(); if (batch) batch.opts.mode = 'expediente'; toast('Nombre de los archivos: CLÍNICA SERIE PACIENTE', 'info'); } if (batch) { applyApprovals(); if (batch.opts.extract) renderTable(); renderLot(); } apRender(); }
 const ST = { aprobada: ['✔ Aprobada', 'b-ok'], observada: ['⛔ Observada', 'b-bad'], revisar: ['❓ Revisar', 'b-warn'], sin: ['⚠ Sin aprobación', 'b-warn'] };
 function apRender() {
   show($('#apWrap'), AP.list.length > 0);
