@@ -1532,25 +1532,52 @@ $('#btnCopy').onclick = async () => {
 const AP = { list: [] }; let AP_UID = 0;
 const OBS_W = /OBSERV|REGULARIZ|DESCONTAR|NO PROCEDE|RECHAZ|ANULA|CORREGIR|REFACTUR|SUBSANA|DEVOLV|DEVUELV|NO CORRESPONDE|FALTA|PENDIENTE DE|NO SE AUTORIZA|EXCESO/;
 const OK_W = /PROCEDER|PROCEDE\b|APROBAD|CONFORME|TRAMITE CORRESPONDIENTE|CONTINUAR|AUTORIZAD|VALIDAD|PAGAR|OK\b/;
+/* Decide el estado leyendo el sentido de la frase: una observación ya resuelta («habiendo absuelto las observaciones»,
+   «observaciones levantadas», «sin observaciones») no cuenta como observación pendiente. */
+const RESUELTA = '(?:ABSUEL|ABSOLVI|LEVANTA|SUBSANA|CORREGI|REGULARIZA|SUPERA|ATENDI|RESUEL|SOLUCIONA|CUMPLI)[A-Z]*';
+const RE_RES1 = new RegExp(RESUELTA + '\\s+(?:(?:CON|A|LA|LAS|EL|LOS|SU|SUS|DICHA|DICHAS|TODAS)\\s+)*OBSERVACION(?:ES)?', 'g');
+const RE_RES2 = new RegExp('OBSERVACION(?:ES)?\\s+(?:(?:HAN|FUERON|SIDO|YA|HAN SIDO|ESTAN|ESTA)\\s+)*' + RESUELTA, 'g');
+function apStatus(text, obsSec) {
+  const t = normTxt(text).replace(/\s+/g, ' ').replace(RE_RES1, ' RESUELTO ').replace(RE_RES2, ' RESUELTO ').replace(/SIN\s+(?:NINGUNA\s+)?OBSERVACION(?:ES)?/g, ' RESUELTO ');
+  if (/\bNO\s+(?:PROCEDE|PROCEDER|SE\s+AUTORIZA|CORRESPONDE|ESTA\s+CONFORME)/.test(t)) return 'observada';
+  const obs = OBS_W.test(t), ok = OK_W.test(t);
+  if (obs && !ok) return 'observada';
+  if (ok && !obs) return 'aprobada';
+  if (ok && obs) return 'revisar';                                        // instrucción mixta: que decida la persona
+  return obsSec ? 'observada' : 'revisar';
+}
 function parseAprobacion(lines) {
   const facts = new Map(), rucs = new Set(), adj = []; let obsSec = false, asunto = '';
   const reF = /(?:FACTURA|FACT\.?|BOLETA|COMPROBANTE|DOCUMENTO)\s*(?:ELECTRONICA\s*)?(?:N[°ºO]?\.?\s*)?([A-Z][A-Z0-9]{3})\s*[-–—]\s*(\d{1,10})\b\s*[:\-–.]?\s*(.*)$/;
   const reB = /^[\s\-•*·>\d.)]*([FEB][A-Z0-9]{3})\s*[-–—]\s*(\d{1,10})\b\s*[:\-–]\s*(.+)$/;
-  for (const raw of lines) {
-    const L = normTxt(raw).replace(/\s+/g, ' ').trim();
+  const isFact = L => reF.test(L) || reB.test(L);
+  const STOP = /^(?:ATTE|ATENTAMENTE|SALUDOS|SALUDOS CORDIALES|ESTIMAD|DE:|ENVIADO|PARA:|CC:|ASUNTO:|HTTPS?:|[A-Z ]+@)/;
+  const norm = lines.map(raw => normTxt(raw).replace(/\s+/g, ' ').trim());
+  norm.forEach((L, i) => {
+    const raw = lines[i];
     for (const m of raw.matchAll(/(\d{11})_\d{2}_([A-Z0-9]{4})_(\d{1,10})\.pdf/gi)) { rucs.add(m[1]); adj.push(tdKey(m[2], m[3])); }
+    for (const m of raw.matchAll(/(?:^|[\s;,])(?:[A-Z0-9]+_)?([FEB][A-Z0-9]{3})_(\d{1,10})\.pdf/gi)) if (/\d/.test(m[1])) adj.push(tdKey(m[1], m[2]));   // CORPAC_F160_00014467.pdf
+    for (const m of raw.matchAll(/\b\d{1,4}_(\d{11})_\d+_[\w_]*\.S01\b/gi)) rucs.add(m[1]);                                                   // RUC en el nombre de la trama
+  });
+  for (let i = 0; i < norm.length; i++) {
+    const L = norm[i], raw = lines[i];
     if (!asunto) { const a = /^ASUNTO:\s*(.+)$/.exec(L) || /^RV:\s*(.+)$/.exec(L); if (a) asunto = raw.replace(/^.*?(?:Asunto:|RV:)\s*/i, '').replace(/^(?:RV|RE|FW|FWD):\s*/i, '').trim(); }
     const m = reF.exec(L) || reB.exec(L);
-    if (!m) { if (/OBSERVAD|OBSERVACION/.test(L)) obsSec = true; else if (/EVALUAR|CONCLUSION|APROBAD|CONFORMIDAD/.test(L)) obsSec = false; continue; }
+    if (!m) { if (/OBSERVAD|OBSERVACION/.test(L) && !RE_RES1.test(L) && !RE_RES2.test(L)) obsSec = true; else if (/EVALUA|CONCLUSION|APROBAD|CONFORMIDAD/.test(L)) obsSec = false; RE_RES1.lastIndex = RE_RES2.lastIndex = 0; continue; }
     if (!/\d/.test(m[1])) continue;
     const key = tdKey(m[1], m[2]); if (facts.has(key)) continue;            // el primero es el mensaje más reciente del hilo
-    const motivo = raw.replace(/^.*?[A-Z][A-Z0-9]{3}\s*[-–—]\s*\d{1,10}\s*[:\-–.]?\s*/i, '').replace(/\s+/g, ' ').trim();
-    const st = OBS_W.test(m[3]) ? 'observada' : OK_W.test(m[3]) ? 'aprobada' : obsSec ? 'observada' : 'revisar';
-    facts.set(key, { key, serie: m[1], num: m[2], status: st, motivo });
+    let motivo = raw.replace(/^.*?[A-Z][A-Z0-9]{3}\s*[-–—]\s*\d{1,10}\s*[:\-–.]?\s*/i, '');
+    for (let j = i + 1; j <= i + 3 && j < norm.length; j++) {               // el motivo puede seguir en las líneas de abajo
+      if (!norm[j] || isFact(norm[j]) || STOP.test(norm[j]) || /OBSERVAD|EVALUA/.test(norm[j]) && !/\d/.test(norm[j]) && norm[j].length < 60 && /:$/.test(norm[j])) break;
+      motivo += ' ' + lines[j];
+    }
+    motivo = motivo.replace(/\s+/g, ' ').trim();
+    facts.set(key, { key, serie: m[1], num: m[2], status: apStatus(motivo, obsSec), motivo });
   }
   // correo sin detalle por factura pero con aprobación general de los adjuntos
-  if (!facts.size && adj.length && OK_W.test(normTxt(lines.join(' '))) && !OBS_W.test(normTxt(lines.join(' '))))
-    adj.forEach(k => { const [se, nu] = k.split('-'); facts.set(k, { key: k, serie: se, num: nu, status: 'aprobada', motivo: 'Aprobación general de los adjuntos del correo' }); });
+  const all = normTxt(lines.join(' '));
+  if (!facts.size && adj.length && apStatus(all, false) === 'aprobada')
+    [...new Set(adj)].forEach(k => { const [se, nu] = k.split('-'); facts.set(k, { key: k, serie: se, num: nu, status: 'aprobada', motivo: 'Aprobación general de los adjuntos del correo' }); });
   return { facturas: [...facts.values()], rucs: [...rucs], asunto };
 }
 async function readAprobacion(file) {
