@@ -933,6 +933,10 @@ function parseInvoice(rawText, rawLines) {
   while ((m = serRe.exec(T))) if (/\d/.test(m[1])) sers.push({ s: `${m[1]}-${m[2]}`, idx: m.index, ctx: /(FACTURA|BOLETA|NOTA|RECIBO|COMPROBANTE|N[°ºO]\b|NRO)/.test(T.slice(Math.max(0, m.index - 110), m.index)), guia: m[1][0] === 'T' });
   const sPick = sers.find(x => x.ctx && !x.guia) || sers.find(x => !x.guia) || sers[0];
   if (sPick) r.serie = sPick.s;
+  else {
+    const alt = /(?:FACTURA|BOLETA|ELECTRONICA|COMPROBANTE|NOTA DE CREDITO|NOTA DE DEBITO)[^]{0,90}?(?:^|[^A-Z0-9])([FEB][A-Z0-9]{3})\s*(?:N[°ºO]\.?|NRO\.?|NUM\.?|#|:)?\s*(\d{4,10})(?!\d)/.exec(T);
+    if (alt && /\d/.test(alt[1])) r.serie = `${alt[1]}-${alt[2]}`;
+  }
   if (!r.tipo && r.serie) r.tipo = r.serie[0] === 'B' ? 'Boleta' : (r.serie[0] === 'F' || r.serie[0] === 'E') ? 'Factura' : '';
 
   // --- Fecha de emisión (junto a su etiqueta; si no, la primera fecha del documento)
@@ -1243,20 +1247,31 @@ function computeOutNames() {
 }
 
 // --- análisis de la 1ª página
-async function analyzeFirstPage(buf, o, setStatus) {
+function serieFromName(name) {
+  const b = String(name || '').replace(/\.pdf$/i, '').toUpperCase();
+  const m = /(?:^|[^A-Z0-9])([FEB][A-Z0-9]{3})[ _-]+(\d{1,10})(?!\d)/.exec(b);
+  return m && /\d/.test(m[1]) ? `${m[1]}-${m[2]}` : '';
+}
+const rucFromName = name => { const m = /(?:^|[^\d])((?:10|15|16|17|20)\d{9})(?!\d)/.exec(String(name || '')); return m && rucValido(m[1]) ? m[1] : ''; };
+async function analyzeFirstPage(buf, o, setStatus, fileName = '') {
   const pdf = await openPdfJs(buf);
   try {
     const page = await pdf.getPage(1);
     let lines = await pageTextLines(page), text = lines.join('\n'), method = 'Texto digital';
     const scanned = text.replace(/\s/g, '').length < 25;
     const notas = [];
-    if (o.ocr && (scanned || o.forceOcr)) {
+    if (scanned || (o.ocr && o.forceOcr)) {                               // hoja 1 en imagen: OCR automático
       setStatus('Aplicando OCR a la página 1…');
       ocrLog = m => { if (m.status === 'recognizing text') setStatus(`OCR: ${Math.round(m.progress * 100)}%`); else if (m.status) setStatus('Preparando OCR…'); };
       text = await ocrCanvas(await renderPage(page, { maxSide: 2400 }));
       lines = text.split(/\n/).map(l => l.trim()).filter(Boolean); method = 'OCR';
-    } else if (scanned && !o.ai) notas.push('Página escaneada: activa OCR o IA');
-    let r = parseInvoice(text, lines); r.notas.push(...notas);
+    }
+    let r;
+    try { r = parseInvoice(text, lines); }
+    catch (e) { r = parseInvoice('', []); }
+    r.notas.push(...notas);
+    if (!r.serie) { const fs = serieFromName(fileName); if (fs) { r.serie = fs; r.notas.push('Serie-número tomada del nombre del archivo'); } }
+    if (!r.ruc) { const fr = rucFromName(fileName); if (fr) r.ruc = fr; }
     if (!r.paciente && pdf.numPages > 1) {                                 // el paciente suele estar en la liquidación (hoja 2, 3…)
       let ocrDone = 0;
       for (let p = 2; p <= Math.min(pdf.numPages, 8) && !r.paciente; p++) {
@@ -1309,8 +1324,8 @@ async function processInvoices() {
         const single = await subsetDoc(src, [0]);                       // copia directa de la página 1, sin recomprimir
         rec.singleBytes = await single.save();
         if (o.extract) {
-          try { rec.row = await analyzeFirstPage(buf, o, msg => progFact.text(`${msg} ${label}`)); }
-          catch (ex) { rec.row = { tipo: '', ruc: '', rucCliente: '', razon: '', paciente: '', abrev: '', serie: '', fecha: '', moneda: '', subtotal: null, igv: null, total: null, notas: [], metodo: 'Error', error: 'Error de lectura: ' + (ex.message || ex) }; }
+          try { rec.row = await analyzeFirstPage(buf, o, msg => progFact.text(`${msg} ${label}`), e.file.name); }
+          catch (ex) { rec.row = { tipo: '', ruc: rucFromName(e.file.name), rucCliente: '', razon: '', paciente: '', abrev: '', serie: serieFromName(e.file.name), fecha: '', moneda: '', subtotal: null, igv: null, total: null, notas: [], metodo: 'Error', error: 'Error de lectura: ' + (ex.message || ex) }; }
         }
         e.status = 'ok';
       } catch (ex) {
@@ -1681,7 +1696,7 @@ function renderLot() {
   const map = apMap(), keysPdf = new Set(batch.items.map(i => keyOfRow(i.row)).filter(Boolean));
   const apSinPdf = [...map.values()].filter(f => f.status === 'aprobada' && !keysPdf.has(f.key));
   const byStatus = s => batch.items.filter(i => !i.dup && !i.incluir && i.ap?.status === s), dups = batch.items.filter(i => i.dup);
-  const rucs = new Set([...items.map(i => i.row?.ruc).filter(Boolean), ...AP.list.flatMap(a => a.rucs)]);
+  const rucs = new Set(batch.items.filter(i => !i.dup).map(i => i.row?.ruc).filter(Boolean));
   const lines = [];
   if (has) lines.push(`<div class="flex flex-wrap gap-2">${statChip(`✉️ ${AP.list.length} correo(s)`, 'b-blue')}${statChip(`✔ ${items.length} en el lote`, 'b-ok')}${byStatus('observada').length ? statChip(`⛔ ${byStatus('observada').length} observada(s) fuera`, 'b-bad') : ''}${byStatus('sin').length ? statChip(`⚠ ${byStatus('sin').length} sin aprobación fuera`, 'b-warn') : ''}${apSinPdf.length ? statChip(`📭 ${apSinPdf.length} aprobada(s) sin PDF`, 'b-warn') : ''}</div>`);
   if (apSinPdf.length) lines.push(`<p><b>Aprobadas en el correo, pero no subiste su PDF:</b> ${apSinPdf.map(f => `<span class="mono font-bold">${esc(f.serie)}-${esc(f.num)}</span>`).join(', ')}</p>`);
