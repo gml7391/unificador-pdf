@@ -1209,13 +1209,13 @@ function readOpts() {
     ai: $('#optAi').checked && !!getKey() };
 }
 const namePattern = o => o.mode === 'serie' ? '{serie}' : o.mode === 'ruc_serie' ? '{ruc}_{serie}' : o.mode === 'expediente' ? '{abrev} {serie} {paciente}' : (o.pattern || '{nombre}');
-function buildOutName(it, o) {
+function buildOutName(it, o, sinPaciente = false) {
   const base = it.name.replace(/\.pdf$/i, ''), r = it.row;
   let name = base;
   if (o.mode !== 'original' && r) {
     const pat = namePattern(o);
     let missing = false;
-    const v = { nombre: base, ruc: r.ruc, serie: r.serie, fecha: (r.fecha || '').replace(/\//g, '-'), total: r.total != null ? r.total.toFixed(2) : '', abrev: (r.abrev || '').trim(), paciente: (r.paciente || '').trim() };
+    const v = { nombre: base, ruc: r.ruc, serie: r.serie, fecha: (r.fecha || '').replace(/\//g, '-'), total: r.total != null ? r.total.toFixed(2) : '', abrev: (r.abrev || '').trim(), paciente: sinPaciente ? '' : (r.paciente || '').trim() };
     name = pat.replace(/\{(\w+)\}/g, (_, k) => { const x = v[k]; if (x === undefined || x === '') { if (k !== 'paciente') missing = true; return ''; } return x; })
       .replace(/\s{2,}/g, ' ').replace(/[\s_-]+$/, '').replace(/^[\s_-]+/, '');
     if (missing || !sanitizeName(name).replace(/[-_ ]/g, '')) name = base;
@@ -1224,7 +1224,8 @@ function buildOutName(it, o) {
 }
 function computeOutNames() {
   const used = new Set(), first = typeof lotItems === 'function' ? lotItems() : [], rest = batch.items.filter(it => !first.includes(it));
-  [...first, ...rest].forEach(it => { if (it.singleBytes) it.outName = uniqueName(buildOutName(it, batch.opts), used); });
+  const usedOne = new Set();                                             // las 1ª hojas sueltas van sin el paciente
+  [...first, ...rest].forEach(it => { if (it.singleBytes) { it.outName = uniqueName(buildOutName(it, batch.opts), used); it.outNameOne = uniqueName(buildOutName(it, batch.opts, true), usedOne); } });
 }
 
 // --- análisis de la 1ª página
@@ -1406,7 +1407,7 @@ $('#btnDlZip').onclick = async () => {
   try {
     progDl.start('Empaquetando ZIP…'); computeOutNames(); const zip = new JSZip();
     if (!lotItems().length) throw new Error('No hay facturas marcadas para incluir');
-    lotItems().forEach(it => zip.file(it.outName, it.singleBytes, { binary: true }));
+    lotItems().forEach(it => zip.file(it.outNameOne, it.singleBytes, { binary: true }));
     const blob = await zip.generateAsync({ type: 'blob', compression: 'STORE' }, m => progDl.set(m.percent, 'Empaquetando ZIP…'));
     download(blob, 'Facturas_1ra_Hoja.zip'); toast('ZIP descargado', 'ok');
   } catch (e) { toast('No se pudo crear el ZIP: ' + (e.message || e), 'bad'); } finally { progDl.hide(); b.disabled = false; }
@@ -1445,7 +1446,7 @@ async function packEntries({ full = true, one = true, merged = true, aprob = tru
   computeOutNames(); const out = [], items = lotItems(), n = lotNames();
   if (excel === null) excel = $('#optXlsxRel').checked && batch.opts.extract;
   if (full) items.forEach(it => out.push({ dir: DIR_EXP, name: it.outName, data: it.file }));
-  if (one) items.forEach(it => out.push({ dir: '', name: it.outName, data: it.singleBytes }));
+  if (one) items.forEach(it => out.push({ dir: '', name: it.outNameOne, data: it.singleBytes }));
   if (merged && items.length) { progDl.text('Uniendo facturas…'); out.push({ dir: DIR_REL, name: n.fac, data: await buildMergedLot(items) }); }
   if (aprob && AP.list.length) { progDl.text('Uniendo aprobaciones…'); out.push({ dir: DIR_REL, name: n.ap, data: await buildAprobMerged() }); }
   if (excel && window.XLSX && items.some(i => i.row)) out.push({ dir: DIR_REL, name: n.xl, data: new Blob([XLSX.write(buildExcelWb(true), { bookType: 'xlsx', type: 'array', cellDates: true })]) });
@@ -1653,11 +1654,11 @@ function renderLot() {
   // vista previa de la carpeta
   computeOutNames(); const n = lotNames(), xl = $('#optXlsxRel').checked && batch.opts.extract;
   const list = (arr, ind) => arr.slice(0, 4).map(t => `<div class="tree-row">${ind}${esc(t)}</div>`).join('') + (arr.length > 4 ? `<div class="tree-row tree-dim">${ind}… y ${arr.length - 4} más</div>` : '');
-  const names = items.map(i => i.outName);
+  const names = items.map(i => i.outName), namesOne = items.map(i => i.outNameOne);
   $('#treePreview').innerHTML = !items.length ? '<span class="tree-dim">No hay facturas marcadas para incluir.</span>' :
     `<div class="tree-row tree-dir">📁 (tu carpeta)</div>
-     <div class="tree-row tree-dir">├─ 📁 ${DIR_EXP} <span class="tree-dim font-normal">· ${items.length} expediente(s) completos, originales</span></div>${list(names, '│&nbsp;&nbsp;&nbsp;&nbsp;')}
-     <div class="tree-row">├─ 📄 <span class="tree-dim">${items.length} factura(s) de 1 hoja, con el mismo nombre:</span></div>${list(names, '│&nbsp;&nbsp;&nbsp;&nbsp;')}
+     <div class="tree-row tree-dir">├─ 📁 ${DIR_EXP} <span class="tree-dim font-normal">· ${items.length} expediente(s) completos, originales, con el paciente</span></div>${list(names, '│&nbsp;&nbsp;&nbsp;&nbsp;')}
+     <div class="tree-row">├─ 📄 <span class="tree-dim">${items.length} factura(s) de 1 hoja, sin el nombre del paciente:</span></div>${list(namesOne, '│&nbsp;&nbsp;&nbsp;&nbsp;')}
      <div class="tree-row tree-dir">└─ 📁 ${DIR_REL}</div>
      <div class="tree-row">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;${esc(n.fac)} <span class="tree-dim">· ${items.length} hoja(s)</span></div>
      ${has ? `<div class="tree-row">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;${esc(n.ap)} <span class="tree-dim">· ${AP.list.length} correo(s), todas sus hojas</span></div>` : ''}
