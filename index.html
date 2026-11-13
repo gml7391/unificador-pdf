@@ -251,6 +251,11 @@
           <div><label class="lbl" for="fileSuffix">Sufijo (opcional)</label><input id="fileSuffix" class="field" placeholder="Ej: _p1"></div>
         </div>
         <div>
+          <label class="lbl" for="miRuc">RUC de tu empresa (cliente)</label>
+          <input id="miRuc" class="field mono" value="20100004675" inputmode="numeric" maxlength="11">
+          <p class="hint">Nunca se usa como RUC de la clínica, aunque aparezca primero en la factura. Por defecto: CORPAC.</p>
+        </div>
+        <div>
           <label class="lbl" for="mergedName2">Nombre de las facturas unidas <span class="font-normal text-slate-400">(opcional)</span></label>
           <input id="mergedName2" class="field" placeholder="Automático: FACTURAS UNIDAS + nombre de la clínica">
         </div>
@@ -900,6 +905,7 @@ function findDates(txt) {
   return out.sort((a, b) => a.idx - b.idx);
 }
 
+const getMyRuc = () => { const v = (document.getElementById('miRuc')?.value || '').replace(/\D/g, ''); return v.length === 11 ? v : '20100004675'; };
 function parseInvoice(rawText, rawLines) {
   const lines = rawLines && rawLines.length ? rawLines : rawText.split(/\n/).map(l => l.trim()).filter(Boolean);
   const flat = normTxt(lines.join(' \n ')).replace(/[ \t]+/g, ' ');
@@ -907,10 +913,14 @@ function parseInvoice(rawText, rawLines) {
   const r = { tipo: '', ruc: '', rucCliente: '', razon: '', serie: '', fecha: '', moneda: '', subtotal: null, igv: null, total: null, totalEstimado: false, notas: [] };
 
   // --- RUC: primer RUC con dígito verificador válido = emisor; el siguiente distinto = cliente
+  // El RUC de tu empresa (el cliente, p. ej. CORPAC) nunca se toma como RUC de la clínica, aunque aparezca primero.
+  const myRuc = getMyRuc();
   const rucs = []; let m; const rucRe = /(?:^|[^\d])((?:10|15|16|17|20)\d{9})(?!\d)/g;
-  while ((m = rucRe.exec(T))) rucs.push({ ruc: m[1], ok: rucValido(m[1]), lab: /R\.?\s?U\.?\s?C\.?\s*(?:N[°ºO]\.?)?\s*[:.]?\s*$/.test(T.slice(Math.max(0, m.index - 18), m.index + 1)) });
-  const emi = rucs.find(x => x.lab) || rucs.find(x => x.ok) || rucs[0];   // el emisor es el primer RUC rotulado del encabezado
-  if (emi) { r.ruc = emi.ruc; r.rucCliente = (rucs.find(x => x.ok && x.ruc !== emi.ruc) || {}).ruc || ''; }
+  while ((m = rucRe.exec(T))) rucs.push({ ruc: m[1], ok: rucValido(m[1]), lab: /R\.?\s?U\.?\s?C\.?\s*(?:N[°ºO]\.?)?\s*[:.]?\s*$/.test(T.slice(Math.max(0, m.index - 18), m.index + 1)),
+    cli: /(?:SE[ÑN]OR(?:\(?ES\)?)?|CLIENTE|ADQUIRI?ENTE|RECEPTOR|DESTINATARIO)\b[^]{0,60}$/.test(T.slice(Math.max(0, m.index - 70), m.index + 1)) });
+  let pool = rucs.filter(x => x.ruc !== myRuc); if (!pool.length) pool = rucs;
+  const emi = pool.find(x => x.lab && !x.cli) || pool.find(x => x.lab) || pool.find(x => x.ok && !x.cli) || pool.find(x => x.ok) || pool[0];
+  if (emi) { r.ruc = emi.ruc; r.rucCliente = (rucs.find(x => x.ruc === myRuc) || rucs.find(x => x.ok && x.ruc !== emi.ruc) || {}).ruc || ''; }
 
   // --- Tipo de comprobante (el que aparece primero en el encabezado)
   const tipos = [[/NOTA DE CREDITO/, 'Nota de crédito'], [/NOTA DE DEBITO/, 'Nota de débito'], [/BOLETA/, 'Boleta'], [/FACTURA/, 'Factura'], [/RECIBO POR HONORARIOS/, 'Recibo por honorarios'], [/GUIA DE REMISION/, 'Guía de remisión'], [/TICKET/, 'Ticket']];
@@ -959,7 +969,7 @@ function parseInvoice(rawText, rawLines) {
 
   // --- Razón social del emisor (heurística: primera línea del encabezado con forma societaria)
   const soc = /\b(?:S\.?\s?A\.?\s?C|S\.?\s?A\.?\s?A|S\.?\s?R\.?\s?L|E\.?\s?I\.?\s?R\.?\s?L|S\.?\s?C\.?\s?R\.?\s?L|S\.?\s?A)\b\.?/;
-  const segs = lines.slice(0, 14).flatMap(l => l.split(/\s{3,}/)).map(x => x.trim());
+  const segs = lines.slice(0, 14).flatMap(l => l.split(/\s{3,}/)).map(x => x.replace(/\s*\bR\.?\s?U\.?\s?C\b\.?.*$/i, '').trim()).filter(Boolean);
   const cand = segs.find(l => soc.test(normTxt(l)) && !/FACTURA|BOLETA|R\.?U\.?C\b|SE[ÑN]OR|CLIENTE|ADQUIR|DIRECCI/i.test(normTxt(l)) && l.length < 90);
   if (cand) r.razon = cand;
 
@@ -989,8 +999,9 @@ const STOP_W = /^(DE|DEL|LA|LAS|LOS|EL|Y|E|EN|S|A|C|R|L|SAC|SA|SRL|EIRL|SAA|SCRL
 function guessAbrev(T, ruc, razon, lines = []) {
   const saved = (store.get('abrevMap', {}) || {})[ruc]; if (saved) return saved;
   // 1) nombre comercial «CLÍNICA X» del encabezado (antes del bloque del cliente): CLINICA MACSALUD → MACSALUD
+  const myRuc = getMyRuc();
   for (const l of lines.slice(0, 18)) {
-    if (/SE[ÑN]OR|CLIENTE|ADQUIRI?ENTE/i.test(normTxt(l))) break;
+    if (/SE[ÑN]OR|CLIENTE|ADQUIRI?ENTE|RECEPTOR/i.test(normTxt(l)) || l.includes(myRuc)) continue;   // el bloque del cliente no es la clínica
     for (const sg of l.split(/\s{3,}/)) {
       const m = /(?:^|[^A-Z])CLINICA\s+([A-Z0-9][A-Z0-9 .&'-]{1,60})/.exec(normTxt(sg).replace(/\s+/g, ' '));
       if (!m) continue;
@@ -1004,6 +1015,9 @@ function guessAbrev(T, ruc, razon, lines = []) {
     const d = m[1].replace(/-/g, '');
     if (ini && (isSub(d, ini) || normTxt(razon).replace(/[^A-Z0-9]/g, '').includes(d))) return d;
   }
+  // 3) razón social sin la forma societaria, si es corta (POLICLINICO SANTA ROSA E.I.R.L. → POLICLINICO SANTA ROSA)
+  const rs = normTxt(razon || '').replace(/\b(?:S\.?\s?A\.?\s?C|S\.?\s?A\.?\s?A|S\.?\s?R\.?\s?L|E\.?\s?I\.?\s?R\.?\s?L|S\.?\s?C\.?\s?R\.?\s?L|S\.?\s?A)\b\.?/g, ' ').replace(/[^A-Z0-9&' ]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (rs && rs.split(' ').length <= 5) return rs;
   return ini.slice(0, 6);
 }
 
@@ -1181,7 +1195,7 @@ $('#btnClearFact').onclick = () => qFact.clear();
 $$('#qFactWrap [data-sort]').forEach(b => b.onclick = () => qFact.sort(b.dataset.sort));
 
 // --- opciones (persistentes)
-const OPT_IDS = ['nameMode', 'namePattern', 'filePrefix', 'fileSuffix', 'mergedName2', 'optExtract', 'optOcr', 'optForceOcr', 'optAi'];
+const OPT_IDS = ['nameMode', 'namePattern', 'filePrefix', 'fileSuffix', 'mergedName2', 'miRuc', 'optExtract', 'optOcr', 'optForceOcr', 'optAi'];
 function restoreOpts() {
   const s = store.get('opts', {});
   if (store.get('optsV', 1) < 2) { if (s.nameMode === 'original') s.nameMode = 'expediente'; store.set('optsV', 2); }
