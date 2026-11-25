@@ -221,13 +221,13 @@
       <h3 class="font-bold text-sm flex items-center gap-2"><span class="step !bg-indigo-100 !text-indigo-700">📋</span> Orden de trabajo (OT) <span class="badge b-gray">opcional</span></h3>
       <span id="otCount" class="text-xs text-slate-500"></span>
     </div>
-    <p class="text-xs text-slate-600 -mt-2">Sube la <b>OT</b> (el mandante). Con OT, <b>solo pasan las facturas que están en la OT</b> y en <b>su mismo orden</b> (máx. 35). Las aprobaciones, importes y pacientes se revisan contra la OT, pero <b>tú decides qué guardar</b> con la columna ✔.</p>
+    <p class="text-xs text-slate-600 -mt-2">Sube <b>una o varias OT</b> ya generadas. La app <b>reparte las facturas por OT</b>: una carpeta por cada OT, con sus facturas <b>en el orden de esa OT</b> (máx. 35). Las que no estén en ninguna OT pueden ir a una carpeta <b>SIN OT</b>. Las diferencias se muestran como apoyo; <b>tú decides qué guardar</b> con la columna ✔.</p>
     <div id="dzOt" class="dz !py-5" tabindex="0" role="button" aria-label="Seleccionar la OT">
-      <p class="text-sm font-bold text-slate-700">Arrastra aquí el PDF de la OT</p>
-      <p class="text-xs text-slate-500 mt-1">o haz clic para elegirlo · si subes otra, reemplaza a la anterior</p>
-      <input type="file" id="inOt" accept="application/pdf,.pdf" class="is-hidden">
+      <p class="text-sm font-bold text-slate-700">Arrastra aquí los PDF de las OT</p>
+      <p class="text-xs text-slate-500 mt-1">o haz clic para elegirlos · puedes subir varias a la vez o agregar más después</p>
+      <input type="file" id="inOt" multiple accept="application/pdf,.pdf" class="is-hidden">
     </div>
-    <div id="otWrap" class="is-hidden"></div>
+    <div id="otWrap" class="is-hidden space-y-1.5"></div>
   </div>
 
   <!-- Aprobaciones -->
@@ -318,11 +318,12 @@
       <div class="flex flex-wrap items-start justify-between gap-2">
         <div>
           <p class="text-sm font-bold text-blue-950">Guardar el lote</p>
-          <p class="text-xs text-blue-900/80 mt-0.5">Así quedará dentro de la carpeta que elijas. Solo entran las facturas marcadas en la tabla (columna ✔), en el orden de la OT si la subiste; si no, por número.</p>
+          <p class="text-xs text-blue-900/80 mt-0.5">Así quedará dentro de la carpeta que elijas. Solo entran las facturas marcadas en la tabla (columna ✔). Con OT: una carpeta por OT, en su orden. Sin OT: ordenadas por número.</p>
         </div>
         <div class="flex flex-col gap-1.5">
           <label class="chk !text-xs"><input type="checkbox" id="optXlsxRel"><span>Incluir Excel de relación</span></label>
           <label class="chk !text-xs is-hidden" id="optOtRelWrap"><input type="checkbox" id="optOtRel"><span>Incluir el PDF de la OT</span></label>
+          <label class="chk !text-xs is-hidden" id="optSinOtWrap"><input type="checkbox" id="optSinOt"><span>Carpeta «SIN OT» con las que no están en ninguna OT</span></label>
         </div>
       </div>
       <div id="treePreview" class="bg-white border border-blue-100 rounded-lg p-3 font-mono text-[11.5px] leading-relaxed text-slate-700 overflow-x-auto custom-scroll"></div>
@@ -1377,7 +1378,7 @@ async function processInvoices() {
   if (busyFact || !qFact.items.length) return;
   const o = readOpts(); saveOpts();
   if (o.mode !== 'original') o.extract = true;
-  if (AP.list.length || OT.doc) o.extract = true;                                  // para cruzar con las aprobaciones hace falta la serie-número
+  if (AP.list.length || OT.docs.length) o.extract = true;                                  // para cruzar con las aprobaciones hace falta la serie-número
   busyFact = true; $('#btnProcess').disabled = true; show($('#resFact'), false);
   qFact.items.forEach(i => { i.status = 'idle'; i.error = ''; }); qFact.render();
   progFact.start('Iniciando…');
@@ -1517,56 +1518,67 @@ $('#btnDlZip').onclick = async () => {
     download(blob, 'Facturas_1ra_Hoja.zip'); toast('ZIP descargado', 'ok');
   } catch (e) { toast('No se pudo crear el ZIP: ' + (e.message || e), 'bad'); } finally { progDl.hide(); b.disabled = false; }
 };
-/* --- Lote: EXPEDIENTES/ (originales completos) · 1ª hojas sueltas · PARA RELACION/ (facturas unidas + aprobaciones unidas + Excel) --- */
+/* --- Lote: EXPEDIENTES/ (originales completos) · 1ª hojas sueltas · PARA RELACION/ (facturas unidas + aprobaciones unidas + OT + Excel).
+       Con varias OT: una carpeta por OT (y opcionalmente «SIN OT»), cada una con esa misma estructura. --- */
 const DIR_EXP = 'EXPEDIENTES', DIR_REL = 'PARA RELACION';
+const P = (...xs) => xs.filter(Boolean).join('/');
 const keyOrder = it => { const k = keyOfRow(it.row); if (!k) return null; const [se, nu] = k.split('-'); return [se, +nu]; };
-function lotItems() {                                                    // incluidas: en el orden de la OT si hay OT; si no, por serie y número
+const byNumber = arr => arr.map((it, i) => ({ it, i, k: keyOrder(it) })).sort((a, b) => !a.k || !b.k ? (!a.k - !b.k) || a.i - b.i : a.k[0].localeCompare(b.k[0]) || a.k[1] - b.k[1]).map(x => x.it);
+function lotGroups() {
   const inc = batch.items.filter(it => it.singleBytes && it.incluir);
-  if (OT.doc) return inc.map((it, i) => ({ it, i, n: it.ot ? it.ot.n : 1e6, k: keyOrder(it) })).sort((a, b) => a.n - b.n || (a.k && b.k ? a.k[0].localeCompare(b.k[0]) || a.k[1] - b.k[1] : a.i - b.i)).map(x => x.it);
-  return inc.map((it, i) => ({ it, i, k: keyOrder(it) })).sort((a, b) => !a.k || !b.k ? (!a.k - !b.k) || a.i - b.i : a.k[0].localeCompare(b.k[0]) || a.k[1] - b.k[1]).map(x => x.it);
+  if (!OT.docs.length) return [{ doc: null, dir: '', items: byNumber(inc) }];
+  const multi = OT.docs.length > 1;
+  const g = OT.docs.map(d => ({ doc: d, dir: multi ? sanitizeName(`OT ${d.num}`) : '', items: inc.filter(it => it.ot && it.ot.doc === d).sort((x, y) => x.ot.n - y.ot.n) }));
+  const rest = inc.filter(it => !it.ot);
+  if (rest.length && $('#optSinOt').checked) g.push({ doc: null, dir: 'SIN OT', items: byNumber(rest), sinOt: true });
+  return g;
 }
-function lotClinic() {                                                   // nombre de la clínica más frecuente en el lote
-  const c = {}; lotItems().forEach(it => { const a = (it.row?.abrev || '').trim(); if (a) c[a] = (c[a] || 0) + 1; });
-  return Object.entries(c).sort((a, b) => b[1] - a[1])[0]?.[0] || '';
+const lotItems = () => lotGroups().flatMap(g => g.items);
+function groupClinic(items) {                                            // nombre de la clínica más frecuente
+  const c = {}; items.forEach(it => { const a = (it.row?.abrev || '').trim(); if (a) c[a] = (c[a] || 0) + 1; });
+  return Object.entries(c).sort((x, y) => y[1] - x[1])[0]?.[0] || '';
 }
-const lotNames = () => { const c = lotClinic(), custom = batch.opts.mergedName.trim();
-  return { ot: sanitizeName(`OT ${OT.doc?.num || ''}`.trim()) + '.pdf', fac: ensurePdfExt(custom || `FACTURAS UNIDAS ${c}`.trim(), 'FACTURAS UNIDAS.pdf'), ap: ensurePdfExt(`APROBACIONES UNIDAS ${c}`.trim(), 'APROBACIONES UNIDAS.pdf'), xl: sanitizeName(`RELACION ${c}`.trim()) + '.xlsx' }; };
-const cacheGet = (k, sig) => batch[k] && batch[k].sig === sig ? batch[k].blob : null;
-async function buildMergedLot(items = lotItems()) {
-  const sig = items.map(i => i.id).join(','), hit = cacheGet('_mergedC', sig); if (hit) return hit;
+const lotClinic = () => groupClinic(lotItems());
+const groupNames = g => { const c = groupClinic(g.items), custom = batch.opts.mergedName.trim();
+  return { ot: sanitizeName(`OT ${g.doc?.num || ''}`.trim()) + '.pdf', fac: ensurePdfExt(custom || `FACTURAS UNIDAS ${c}`.trim(), 'FACTURAS UNIDAS.pdf'), ap: ensurePdfExt(`APROBACIONES UNIDAS ${c}`.trim(), 'APROBACIONES UNIDAS.pdf'), xl: sanitizeName(`RELACION ${c}`.trim()) + '.xlsx' }; };
+const lotNames = () => groupNames(lotGroups().find(g => g.items.length) || { items: [], doc: null });
+async function cached(sig, make) { batch._cache ||= new Map(); if (batch._cache.has(sig)) return batch._cache.get(sig); const v = await make(); batch._cache.set(sig, v); if (batch._cache.size > 40) batch._cache.delete(batch._cache.keys().next().value); return v; }
+const buildMergedLot = (items = lotItems()) => cached('F' + items.map(i => i.id).join(','), async () => {
   const out = await PDFLib.PDFDocument.create();
   for (const it of items) { const d = await PDFLib.PDFDocument.load(it.singleBytes); const [pg] = await out.copyPages(d, [0]); out.addPage(pg); }
-  const blob = pdfBlob(await out.save()); batch._mergedC = { sig, blob }; return blob;
+  return pdfBlob(await out.save());
+});
+const apByNumber = list => { const low = ap => ap.facturas.map(f => [f.serie, +f.num]).sort((a, b) => a[0].localeCompare(b[0]) || a[1] - b[1])[0] || ['~', 0]; return list.sort((a, b) => { const x = low(a), y = low(b); return x[0].localeCompare(y[0]) || x[1] - y[1]; }); };
+function apFor(g) {                                                      // correos de ese grupo: con OT, los que aprueban alguna de sus facturas, en el orden de la OT
+  if (g.doc) { const m = new Map(g.doc.items.map(x => [x.key, x.n])), first = ap => Math.min(...ap.facturas.map(f => m.get(f.key) ?? Infinity)); return AP.list.filter(ap => isFinite(first(ap))).sort((a, b) => first(a) - first(b)); }
+  if (g.sinOt) { const keys = new Set(g.items.map(i => keyOfRow(i.row))); return apByNumber(AP.list.filter(ap => ap.facturas.some(f => keys.has(f.key)))); }
+  return apByNumber([...AP.list]);
 }
-function apOrdered() {                                                   // primero el correo con la factura de número más bajo (con OT: solo los de la OT, en su orden)
-  const otm = otMap();
-  if (otm) {
-    const first = ap => Math.min(...ap.facturas.map(f => otm.get(f.key)?.n ?? Infinity));
-    return AP.list.filter(ap => isFinite(first(ap))).sort((a, b) => first(a) - first(b));
-  }
-  const low = ap => ap.facturas.map(f => [f.serie, +f.num]).sort((a, b) => a[0].localeCompare(b[0]) || a[1] - b[1])[0] || ['~', 0];
-  return [...AP.list].sort((a, b) => { const x = low(a), y = low(b); return x[0].localeCompare(y[0]) || x[1] - y[1]; });
-}
-async function buildAprobMerged() {
-  const list = apOrdered(), sig = list.map(a => a.id).join(','), hit = cacheGet('_apC', sig); if (hit) return hit;
+const apOrdered = () => { const gs = lotGroups(); return [...new Set(gs.flatMap(apFor))]; };
+const buildAprobMerged = (list = apOrdered()) => cached('A' + list.map(a => a.id).join(','), async () => {
   const out = await PDFLib.PDFDocument.create();
   for (const ap of list) { const d = await loadLib(await ap.file.arrayBuffer()); (await out.copyPages(d, d.getPageIndices())).forEach(pg => out.addPage(pg)); }
-  const blob = pdfBlob(await out.save()); batch._apC = { sig, blob }; return blob;
-}
-async function packEntries({ full = true, one = true, merged = true, aprob = true, excel = null } = {}) {
-  computeOutNames(); const out = [], items = lotItems(), n = lotNames();
+  return pdfBlob(await out.save());
+});
+async function packEntries({ full = true, one = true, merged = true, aprob = true, excel = null, ot = null } = {}) {
+  computeOutNames(); const out = [];
   if (excel === null) excel = $('#optXlsxRel').checked && batch.opts.extract;
-  if (full) items.forEach(it => out.push({ dir: DIR_EXP, name: it.outName, data: it.file }));
-  if (one) items.forEach(it => out.push({ dir: '', name: it.outNameOne, data: it.singleBytes }));
-  if (merged && items.length) { progDl.text('Uniendo facturas…'); out.push({ dir: DIR_REL, name: n.fac, data: await buildMergedLot(items) }); }
-  if (aprob && apOrdered().length) { progDl.text('Uniendo aprobaciones…'); out.push({ dir: DIR_REL, name: n.ap, data: await buildAprobMerged() }); }
-  if (OT.doc && $('#optOtRel').checked) out.push({ dir: DIR_REL, name: n.ot, data: OT.doc.file });
-  if (excel && window.XLSX && items.some(i => i.row)) out.push({ dir: DIR_REL, name: n.xl, data: new Blob([XLSX.write(buildExcelWb(true), { bookType: 'xlsx', type: 'array', cellDates: true })]) });
+  if (ot === null) ot = $('#optOtRel').checked;
+  for (const g of lotGroups()) {
+    if (!g.items.length) continue;
+    const n = groupNames(g), aps = apFor(g), rel = P(g.dir, DIR_REL);
+    if (full) g.items.forEach(it => out.push({ dir: P(g.dir, DIR_EXP), name: it.outName, data: it.file }));
+    if (one) g.items.forEach(it => out.push({ dir: g.dir, name: it.outNameOne, data: it.singleBytes }));
+    if (merged) { progDl.text(`Uniendo facturas${g.dir ? ' · ' + g.dir : ''}…`); out.push({ dir: rel, name: n.fac, data: await buildMergedLot(g.items) }); }
+    if (aprob && aps.length) { progDl.text(`Uniendo aprobaciones${g.dir ? ' · ' + g.dir : ''}…`); out.push({ dir: rel, name: n.ap, data: await buildAprobMerged(aps) }); }
+    if (ot && g.doc) out.push({ dir: rel, name: n.ot, data: g.doc.file });
+    if (excel && window.XLSX && g.items.some(i => i.row)) out.push({ dir: rel, name: n.xl, data: new Blob([XLSX.write(buildExcelWb(g.items), { bookType: 'xlsx', type: 'array', cellDates: true })]) });
+  }
   return out;
 }
 async function zipEntries(entries, zipName, label) {
   progDl.start(label); const zip = new JSZip();
-  entries.forEach(e => zip.file(e.dir ? `${e.dir}/${e.name}` : e.name, e.data, { binary: true }));
+  entries.forEach(e => zip.file(P(e.dir, e.name), e.data, { binary: true }));
   const blob = await zip.generateAsync({ type: 'blob', compression: 'STORE' }, m => progDl.set(m.percent, label));
   download(blob, zipName);
 }
@@ -1576,9 +1588,16 @@ async function withDl(btn, fn) {
   finally { progDl.hide(); btn.disabled = false; }
 }
 const lotGuard = () => { if (!lotItems().length) { toast('No hay facturas marcadas para incluir en el lote', 'warn'); return false; } return true; };
-$('#btnDlPack').onclick = () => withDl($('#btnDlPack'), async () => { if (!lotGuard()) return; progDl.start('Preparando…'); await zipEntries(await packEntries(), `${sanitizeName(lotClinic() || 'Lote')}.zip`, 'Empaquetando todo…'); toast('ZIP con todo descargado', 'ok'); });
-$('#btnDlFull').onclick = () => withDl($('#btnDlFull'), async () => { if (!lotGuard()) return; progDl.start('Preparando…'); await zipEntries((await packEntries({ one: false, merged: false, aprob: false, excel: false })).map(e => ({ ...e, dir: '' })), 'EXPEDIENTES.zip', 'Empaquetando expedientes…'); toast('Expedientes descargados', 'ok'); });
-$('#btnDlAprob').onclick = () => withDl($('#btnDlAprob'), async () => { progDl.start('Uniendo aprobaciones…'); download(await buildAprobMerged(), lotNames().ap); toast('Aprobaciones unidas descargadas', 'ok'); });
+const zipBase = () => sanitizeName(OT.docs.length > 1 ? `OT ${OT.docs.map(d => d.num).join('-')}` : OT.docs.length ? `OT ${OT.docs[0].num} ${lotClinic()}` : (lotClinic() || 'Lote')).trim();
+async function oneOrZip(entries, zipName, label) {                       // un solo archivo → se descarga tal cual; varios → ZIP
+  if (entries.length === 1) { download(entries[0].data, entries[0].name); return; }
+  await zipEntries(entries, zipName, label);
+}
+$('#btnDlPack').onclick = () => withDl($('#btnDlPack'), async () => { if (!lotGuard()) return; progDl.start('Preparando…'); await zipEntries(await packEntries(), zipBase() + '.zip', 'Empaquetando todo…'); toast('ZIP con todo descargado', 'ok'); });
+$('#btnDlFull').onclick = () => withDl($('#btnDlFull'), async () => { if (!lotGuard()) return; progDl.start('Preparando…'); await zipEntries(await packEntries({ one: false, merged: false, aprob: false, excel: false, ot: false }), 'EXPEDIENTES.zip', 'Empaquetando expedientes…'); toast('Expedientes descargados', 'ok'); });
+$('#btnDlZip').onclick = () => withDl($('#btnDlZip'), async () => { if (!lotGuard()) return; progDl.start('Preparando…'); await zipEntries(await packEntries({ full: false, merged: false, aprob: false, excel: false, ot: false }), 'Facturas_1ra_Hoja.zip', 'Empaquetando ZIP…'); toast('ZIP descargado', 'ok'); });
+$('#btnDlMerged').onclick = () => withDl($('#btnDlMerged'), async () => { if (!lotGuard()) return; progDl.start('Uniendo facturas…'); await oneOrZip((await packEntries({ full: false, one: false, aprob: false, excel: false, ot: false })).map(e => ({ ...e, dir: e.dir.replace('/' + DIR_REL, '').replace(DIR_REL, '') })), 'FACTURAS UNIDAS.zip', 'Empaquetando…'); toast('Facturas unidas descargadas', 'ok'); });
+$('#btnDlAprob').onclick = () => withDl($('#btnDlAprob'), async () => { progDl.start('Uniendo aprobaciones…'); const e = (await packEntries({ full: false, one: false, merged: false, excel: false, ot: false })).map(x => ({ ...x, dir: x.dir.replace('/' + DIR_REL, '').replace(DIR_REL, '') })); if (!e.length) return toast('No hay correos para este lote', 'warn'); await oneOrZip(e, 'APROBACIONES UNIDAS.zip', 'Empaquetando…'); toast('Aprobaciones unidas descargadas', 'ok'); });
 async function freeName(dir, name) {                                      // nunca sobrescribe: «nombre (2).pdf»
   const dot = name.lastIndexOf('.'), b = dot > 0 ? name.slice(0, dot) : name, x = dot > 0 ? name.slice(dot) : '';
   for (let i = 1; ; i++) { const n = i === 1 ? name : `${b} (${i})${x}`; try { await dir.getFileHandle(n); } catch (e) { if (e.name === 'NotFoundError') return n; throw e; } }
@@ -1588,25 +1607,25 @@ $('#btnSaveFolder').onclick = () => withDl($('#btnSaveFolder'), async () => {
   if (!lotGuard()) return;
   const root = await window.showDirectoryPicker({ id: 'facturapro', mode: 'readwrite' });
   progDl.start('Preparando…'); const entries = await packEntries(), subs = {}; progDl.start('Guardando en la carpeta…');
+  const dirOf = async path => { if (!path) return root; if (subs[path]) return subs[path]; let d = root; for (const part of path.split('/')) d = await d.getDirectoryHandle(part, { create: true }); return (subs[path] = d); };
   for (let i = 0; i < entries.length; i++) {
-    const e = entries[i], dir = e.dir ? (subs[e.dir] ||= await root.getDirectoryHandle(e.dir, { create: true })) : root;
+    const e = entries[i], dir = await dirOf(e.dir);
     const fh = await dir.getFileHandle(await freeName(dir, e.name), { create: true }), w = await fh.createWritable();
     await w.write(e.data); await w.close();
     progDl.set(((i + 1) / entries.length) * 100, `Guardando ${i + 1} de ${entries.length}: ${e.name}`);
   }
   toast(`Guardado en «${root.name}»: ${entries.length} archivos`, 'ok', 6000);
 });
-$('#btnDlMerged').onclick = () => withDl($('#btnDlMerged'), async () => { if (!lotGuard()) return; progDl.start('Uniendo facturas…'); download(await buildMergedLot(), lotNames().fac); toast('Facturas unidas descargadas', 'ok'); });
-function tableMatrix(onlyLot = false) {
+function tableMatrix(list = null) {
   computeOutNames();
-  return (onlyLot ? lotItems() : batch.items).filter(i => i.row).map((it, n) => {
-    const r = it.row; return [n + 1, it.name, it.outName || '', r.tipo, r.ruc, r.razon, r.abrev || '', r.rucCliente, r.serie, r.paciente || '', r.fecha, r.moneda, r.subtotal, r.igv, r.total, it.ot ? it.ot.n : '', it.ot ? it.ot.total : '', apText(it), it.incluir ? 'Sí' : 'No', computeFlags(r).map(f => f[0]).join('; '), r.metodo || ''];
+  return (list || batch.items).filter(i => i.row).map((it, n) => {
+    const r = it.row; return [n + 1, it.name, it.outName || '', r.tipo, r.ruc, r.razon, r.abrev || '', r.rucCliente, r.serie, r.paciente || '', r.fecha, r.moneda, r.subtotal, r.igv, r.total, it.ot ? it.ot.doc.num : '', it.ot ? it.ot.n : '', it.ot ? it.ot.total : '', apText(it), it.incluir ? 'Sí' : 'No', computeFlags(r).map(f => f[0]).join('; '), r.metodo || ''];
   });
 }
-const XL_HEAD = ['N°', 'Archivo original', 'Archivo generado', 'Tipo', 'RUC emisor', 'Razón social', 'Clínica', 'RUC cliente', 'Serie-Número', 'Paciente', 'Fecha emisión', 'Moneda', 'Subtotal', 'IGV', 'Total', 'N° OT', 'Total OT', 'Aprobación', 'Incluida', 'Avisos', 'Método'];
+const XL_HEAD = ['N°', 'Archivo original', 'Archivo generado', 'Tipo', 'RUC emisor', 'Razón social', 'Clínica', 'RUC cliente', 'Serie-Número', 'Paciente', 'Fecha emisión', 'Moneda', 'Subtotal', 'IGV', 'Total', 'OT', 'N° OT', 'Total OT', 'Aprobación', 'Incluida', 'Avisos', 'Método'];
 const XL_DATE = XL_HEAD.indexOf('Fecha emisión'), XL_AMT = ['Subtotal', 'IGV', 'Total', 'Total OT'].map(h => XL_HEAD.indexOf(h));
-function buildExcelWb(onlyLot = false) {
-  const body = tableMatrix(onlyLot).map(row => row.map((v, c) => {
+function buildExcelWb(list = null) {
+  const body = tableMatrix(list).map(row => row.map((v, c) => {
     if (c === XL_DATE) { const d = parseDMY(v); return d ? new Date(d.y, d.m - 1, d.d, 12) : v; }   // fecha real de Excel
     return v === null ? '' : v;
   }));
@@ -1615,7 +1634,7 @@ function buildExcelWb(onlyLot = false) {
     if (row[XL_DATE] instanceof Date) ws[XLSX.utils.encode_cell({ r: i + 1, c: XL_DATE })].z = 'dd/mm/yyyy';
     XL_AMT.forEach(c => { const cell = ws[XLSX.utils.encode_cell({ r: i + 1, c })]; if (cell && cell.t === 'n') cell.z = '#,##0.00'; });
   });
-  ws['!cols'] = [5, 34, 50, 12, 14, 36, 22, 14, 16, 34, 12, 8, 12, 12, 13, 7, 12, 40, 9, 40, 16].map(w => ({ wch: w }));
+  ws['!cols'] = [5, 34, 50, 12, 14, 36, 22, 14, 16, 34, 12, 8, 12, 12, 13, 10, 7, 12, 40, 9, 40, 16].map(w => ({ wch: w }));
   ws['!autofilter'] = { ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: body.length, c: XL_HEAD.length - 1 } }) };
   const t = totalsByCurrency();
   const ws2 = XLSX.utils.aoa_to_sheet([['Moneda', 'Comprobantes', 'Total'], ...Object.entries(t).map(([k, v]) => [k, v.n, Math.round(v.total * 100) / 100])]);
@@ -1715,8 +1734,8 @@ async function apAdd(files) {
   await disposeOcr(); apChanged();
 }
 function apChanged() {
-  if (!AP.list.length && !OT.doc && batch) { applyApprovals(); if (batch.opts.extract) renderTable(); renderLot(); apRender(); return; }
-  if (OT.doc && $('#nameMode').value === 'original') { $('#nameMode').value = 'expediente'; syncOptsUi(); saveOpts(); if (batch) batch.opts.mode = 'expediente'; }
+  if (!AP.list.length && !OT.docs.length && batch) { applyApprovals(); if (batch.opts.extract) renderTable(); renderLot(); apRender(); return; }
+  if (OT.docs.length && $('#nameMode').value === 'original') { $('#nameMode').value = 'expediente'; syncOptsUi(); saveOpts(); if (batch) batch.opts.mode = 'expediente'; }
   if (AP.list.length && $('#nameMode').value === 'original') { $('#nameMode').value = 'expediente'; syncOptsUi(); saveOpts(); if (batch) batch.opts.mode = 'expediente'; toast('Nombre de los archivos: CLÍNICA SERIE PACIENTE', 'info'); } if (batch) { applyApprovals(); if (batch.opts.extract) renderTable(); renderLot(); } apRender(); }
 const ST = { aprobada: ['✔ Aprobada', 'b-ok'], observada: ['⛔ Observada', 'b-bad'], revisar: ['❓ Revisar', 'b-warn'], sin: ['⚠ Sin aprobación', 'b-warn'] };
 function apRender() {
@@ -1764,7 +1783,7 @@ function applyApprovals() {
       if (!r.pacManual) r.paciente = (it.ot && it.ot.paciente) ? it.ot.paciente : r.pacOrig;
     }
     // con OT: entra lo que está en la OT (aunque el correo venga mal); sin OT: entra lo aprobado
-    const def = !it.dup && (otm ? !!it.ot : (!has || it.ap.status === 'aprobada'));
+    const def = !it.dup && (otm && it.ot ? true : (!has || it.ap.status === 'aprobada'));   // las que no están en ninguna OT van a «SIN OT» (si se marca)
     it.incluir = it.incManual ?? def;
   }
 }
@@ -1790,21 +1809,24 @@ function renderLot() {
   const apSinPdf = [...map.values()].filter(f => f.status === 'aprobada' && !keysPdf.has(f.key));
   const byStatus = s => batch.items.filter(i => !i.dup && !i.incluir && i.ap?.status === s), dups = batch.items.filter(i => i.dup);
   const rucs = new Set(batch.items.filter(i => !i.dup).map(i => i.row?.ruc).filter(Boolean));
-  const lines = [], otm = otMap();
-  if (otm) {                                                              // revisión contra la OT
-    const d = OT.doc, enLote = new Set(items.map(i => keyOfRow(i.row)));
-    const sinPdf = d.items.filter(x => !keysPdf.has(x.key)), noEnLote = d.items.filter(x => keysPdf.has(x.key) && !enLote.has(x.key));
-    const fuera = batch.items.filter(i => !i.dup && i.row && !i.ot), conDif = items.filter(i => i.row && computeFlags(i.row).some(f => /OT/.test(f[0])));
-    const sinAp = has ? items.filter(i => i.ap && i.ap.status !== 'aprobada') : [];
-    const sumLote = items.reduce((t, i) => t + (i.ot ? i.ot.total : 0), 0), okAll = !sinPdf.length && !noEnLote.length && !conDif.length && !sinAp.length;
-    lines.push(`<div class="flex flex-wrap gap-2">${statChip(`📋 OT ${esc(d.num)} · ${d.items.length} línea(s)`, 'b-blue')}${statChip(`✔ ${items.length} en el lote`, items.length > 35 ? 'b-bad' : 'b-ok')}${sinPdf.length ? statChip(`📭 ${sinPdf.length} sin PDF`, 'b-warn') : ''}${conDif.length ? statChip(`⚠ ${conDif.length} con diferencias`, 'b-warn') : ''}${sinAp.length ? statChip(`✉️ ${sinAp.length} sin aprobación en correo`, 'b-warn') : ''}${fuera.length ? statChip(`🚫 ${fuera.length} PDF fuera de la OT`, 'b-gray') : ''}${okAll ? statChip('✅ Todo cuadra con la OT', 'b-ok') : ''}</div>`);
-    if (items.length > 35) lines.push(`<p class="text-red-700 font-semibold">⚠ El lote tiene ${items.length} facturas: el máximo por OT es 35.</p>`);
-    lines.push(`<p>Suma del lote según la OT: <b>S/ ${fmtMoney(sumLote)}</b> de <b>S/ ${fmtMoney(d.total)}</b> ${Math.abs(sumLote - (d.total || 0)) <= 0.05 ? '✔' : `<span class="text-amber-700">(faltan S/ ${fmtMoney((d.total || 0) - sumLote)})</span>`}</p>`);
-    if (sinPdf.length) lines.push(`<p><b>Líneas de la OT sin PDF:</b> ${sinPdf.map(x => `<span class="mono font-bold">N° ${x.n} ${esc(x.serie)}-${esc(x.num)}</span> <span class="text-slate-500">${esc(x.paciente)}</span>`).join(' · ')}</p>`);
-    if (noEnLote.length) lines.push(`<p><b>Están en la OT pero las desmarcaste:</b> ${noEnLote.map(x => `<span class="mono font-bold">N° ${x.n} ${esc(x.serie)}-${esc(x.num)}</span>`).join(' · ')}</p>`);
-    if (conDif.length) lines.push(`<p><b>Con diferencias frente a la OT (revísalas):</b> ${conDif.map(i => `<span class="mono font-bold">N° ${i.ot.n} ${esc(i.row.serie)}</span> <span class="text-slate-500">— ${esc(computeFlags(i.row).filter(f => /OT/.test(f[0])).map(f => f[0]).join('; '))}</span>`).join(' · ')}</p>`);
-    if (sinAp.length) lines.push(`<p><b>En la OT pero sin aprobación clara en los correos</b> (igual entran; revísalas): ${sinAp.map(i => `<span class="mono font-bold">N° ${i.ot ? i.ot.n : '?'} ${esc(i.row.serie)}</span> <span class="text-slate-500">(${esc(apText(i))})</span>`).join(' · ')}</p>`);
-    if (fuera.length) lines.push(`<p><b>PDF que no están en esta OT (quedan fuera):</b> ${fuera.map(i => `<span class="mono font-bold">${esc(i.row.serie || i.name)}</span>`).join(', ')}</p>`);
+  const lines = [], otm = otMap(), groups = lotGroups();
+  if (otm) {                                                              // revisión por cada OT (apoyo: tú decides)
+    for (const d of OT.docs) {
+      const g = groups.find(x => x.doc === d), gi = g ? g.items : [], enLote = new Set(gi.map(i => keyOfRow(i.row)));
+      const sinPdf = d.items.filter(x => !keysPdf.has(x.key)), noEnLote = d.items.filter(x => keysPdf.has(x.key) && !enLote.has(x.key) && otm.get(x.key)?.doc === d);
+      const conDif = gi.filter(i => i.row && computeFlags(i.row).some(f => /OT/.test(f[0]))), sinAp = has ? gi.filter(i => i.ap && i.ap.status !== 'aprobada') : [];
+      const suma = gi.reduce((t, i) => t + (i.ot ? i.ot.total : 0), 0), okAll = gi.length && !sinPdf.length && !noEnLote.length && !conDif.length && !sinAp.length;
+      lines.push(`<div class="rounded-lg bg-white/70 border border-emerald-100 p-2.5 space-y-1.5"><div class="flex flex-wrap gap-2 items-center"><b class="text-[12px]">📋 OT ${esc(d.num)}</b>${g && g.dir ? `<span class="text-slate-500">→ carpeta «${esc(g.dir)}»</span>` : ''}${statChip(`${gi.length} de ${d.items.length} en el lote`, gi.length > 35 ? 'b-bad' : 'b-ok')}${sinPdf.length ? statChip(`📭 ${sinPdf.length} sin PDF`, 'b-warn') : ''}${conDif.length ? statChip(`⚠ ${conDif.length} con diferencias`, 'b-warn') : ''}${sinAp.length ? statChip(`✉️ ${sinAp.length} sin aprobación`, 'b-warn') : ''}${okAll ? statChip('✅ cuadra con la OT', 'b-ok') : ''}</div>`
+        + `<p>Suma: <b>S/ ${fmtMoney(suma)}</b> de <b>S/ ${fmtMoney(d.total)}</b> ${Math.abs(suma - (d.total || 0)) <= 0.05 ? '✔' : `<span class="text-amber-700">(faltan S/ ${fmtMoney((d.total || 0) - suma)})</span>`}</p>`
+        + (gi.length > 35 ? `<p class="text-red-700 font-semibold">⚠ ${gi.length} facturas: el máximo por OT es 35.</p>` : '')
+        + (sinPdf.length ? `<p><b>Sin PDF:</b> ${sinPdf.map(x => `<span class="mono font-bold">N° ${x.n} ${esc(x.serie)}-${esc(x.num)}</span> <span class="text-slate-500">${esc(x.paciente)}</span>`).join(' · ')}</p>` : '')
+        + (noEnLote.length ? `<p><b>Desmarcadas:</b> ${noEnLote.map(x => `<span class="mono font-bold">N° ${x.n} ${esc(x.serie)}-${esc(x.num)}</span>`).join(' · ')}</p>` : '')
+        + (conDif.length ? `<p><b>Diferencias:</b> ${conDif.map(i => `<span class="mono font-bold">N° ${i.ot.n} ${esc(i.row.serie)}</span> <span class="text-slate-500">— ${esc(computeFlags(i.row).filter(f => /OT/.test(f[0])).map(f => f[0]).join('; '))}</span>`).join(' · ')}</p>` : '')
+        + (sinAp.length ? `<p><b>Sin aprobación clara en los correos</b> (igual entran): ${sinAp.map(i => `<span class="mono font-bold">N° ${i.ot.n} ${esc(i.row.serie)}</span>`).join(' · ')}</p>` : '') + '</div>');
+    }
+    const fuera = batch.items.filter(i => !i.dup && i.row && !i.ot);
+    if (fuera.length) lines.push(`<p><b>No están en ninguna OT (${fuera.length}):</b> ${fuera.map(i => `<span class="mono font-bold">${esc(i.row.serie || i.name)}</span>`).join(', ')}. ${$('#optSinOt').checked ? 'Van a la carpeta «SIN OT» si están marcadas.' : 'Quedan fuera; marca «Carpeta SIN OT» si quieres guardarlas.'}</p>`);
+    if (OT.conflicts.size) lines.push(`<p class="text-amber-800"><b>Facturas que figuran en más de una OT</b> (se asignan a la primera): ${[...OT.conflicts].map(esc).join(', ')}</p>`);
   }
   if (has && !otm) lines.push(`<div class="flex flex-wrap gap-2">${statChip(`✉️ ${AP.list.length} correo(s)`, 'b-blue')}${statChip(`✔ ${items.length} en el lote`, 'b-ok')}${byStatus('observada').length ? statChip(`⛔ ${byStatus('observada').length} observada(s) fuera`, 'b-bad') : ''}${byStatus('sin').length ? statChip(`⚠ ${byStatus('sin').length} sin aprobación fuera`, 'b-warn') : ''}${apSinPdf.length ? statChip(`📭 ${apSinPdf.length} aprobada(s) sin PDF`, 'b-warn') : ''}</div>`);
   if (apSinPdf.length && !otm) lines.push(`<p><b>Aprobadas en el correo, pero no subiste su PDF:</b> ${apSinPdf.map(f => `<span class="mono font-bold">${esc(f.serie)}-${esc(f.num)}</span>`).join(', ')}</p>`);
@@ -1816,18 +1838,19 @@ function renderLot() {
   sm.className = 'rounded-xl border p-4 text-xs space-y-2 ' + (rucs.size > 1 ? 'border-red-200 bg-red-50' : 'border-emerald-200 bg-emerald-50/60') + (lines.length ? '' : ' is-hidden');
   sm.innerHTML = lines.join('');
   // vista previa de la carpeta
-  computeOutNames(); const n = lotNames(), xl = $('#optXlsxRel').checked && batch.opts.extract;
-  const list = (arr, ind) => arr.slice(0, 4).map(t => `<div class="tree-row">${ind}${esc(t)}</div>`).join('') + (arr.length > 4 ? `<div class="tree-row tree-dim">${ind}… y ${arr.length - 4} más</div>` : '');
-  const names = items.map(i => i.outName), namesOne = items.map(i => i.outNameOne);
-  $('#treePreview').innerHTML = !items.length ? '<span class="tree-dim">No hay facturas marcadas para incluir.</span>' :
-    `<div class="tree-row tree-dir">📁 (tu carpeta)</div>
-     <div class="tree-row tree-dir">├─ 📁 ${DIR_EXP} <span class="tree-dim font-normal">· ${items.length} expediente(s) completos, originales, con el paciente</span></div>${list(names, '│&nbsp;&nbsp;&nbsp;&nbsp;')}
-     <div class="tree-row">├─ 📄 <span class="tree-dim">${items.length} factura(s) de 1 hoja, sin el nombre del paciente${OT.doc ? ', en el orden de la OT' : ''}:</span></div>${list(namesOne, '│&nbsp;&nbsp;&nbsp;&nbsp;')}
-     <div class="tree-row tree-dir">└─ 📁 ${DIR_REL}</div>
-     <div class="tree-row">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;${esc(n.fac)} <span class="tree-dim">· ${items.length} hoja(s)</span></div>
-     ${apOrdered().length ? `<div class="tree-row">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;${esc(n.ap)} <span class="tree-dim">· ${apOrdered().length} correo(s), todas sus hojas</span></div>` : ''}
-     ${OT.doc && $('#optOtRel').checked ? `<div class="tree-row">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;${esc(n.ot)} <span class="tree-dim">· la OT original</span></div>` : ''}
-     ${xl ? `<div class="tree-row">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;${esc(n.xl)}</div>` : ''}`;
+  computeOutNames(); const xl = $('#optXlsxRel').checked && batch.opts.extract, otRel = $('#optOtRel').checked;
+  const list = (arr, ind) => arr.slice(0, 3).map(t => `<div class="tree-row">${ind}${esc(t)}</div>`).join('') + (arr.length > 3 ? `<div class="tree-row tree-dim">${ind}… y ${arr.length - 3} más</div>` : '');
+  const block = (g, ind) => { const n = groupNames(g), aps = apFor(g), sub = ind + '│&nbsp;&nbsp;&nbsp;&nbsp;';
+    return `<div class="tree-row tree-dir">${ind}├─ 📁 ${DIR_EXP} <span class="tree-dim font-normal">· ${g.items.length} expediente(s) completos, con el paciente</span></div>${list(g.items.map(i => i.outName), sub)}
+      <div class="tree-row">${ind}├─ 📄 <span class="tree-dim">${g.items.length} factura(s) de 1 hoja${g.doc ? ', en el orden de la OT' : ''}:</span></div>${list(g.items.map(i => i.outNameOne), sub)}
+      <div class="tree-row tree-dir">${ind}└─ 📁 ${DIR_REL}</div>
+      <div class="tree-row">${ind}&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;${esc(n.fac)} <span class="tree-dim">· ${g.items.length} hoja(s)</span></div>
+      ${aps.length ? `<div class="tree-row">${ind}&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;${esc(n.ap)} <span class="tree-dim">· ${aps.length} correo(s)</span></div>` : ''}
+      ${g.doc && otRel ? `<div class="tree-row">${ind}&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;${esc(n.ot)} <span class="tree-dim">· la OT original</span></div>` : ''}
+      ${xl ? `<div class="tree-row">${ind}&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;${esc(n.xl)}</div>` : ''}`; };
+  const shown = groups.filter(g => g.items.length);
+  $('#treePreview').innerHTML = !shown.length ? '<span class="tree-dim">No hay facturas marcadas para incluir.</span>' :
+    `<div class="tree-row tree-dir">📁 (tu carpeta)</div>` + shown.map(g => g.dir ? `<div class="tree-row tree-dir mt-1">├─ 📁 ${esc(g.dir)} <span class="tree-dim font-normal">· ${g.items.length} factura(s)${g.doc ? ` · ${esc(groupClinic(g.items))}` : ''}</span></div>${block(g, '│&nbsp;&nbsp;&nbsp;&nbsp;')}` : block(g, '')).join('');
 }
 $('#optXlsxRel').checked = store.get('xlsxRel', true);
 $('#optXlsxRel').addEventListener('change', () => { store.set('xlsxRel', $('#optXlsxRel').checked); renderLot(); });
@@ -1836,8 +1859,12 @@ $('#optXlsxRel').addEventListener('change', () => { store.set('xlsxRel', $('#opt
 /* =====================================================================
    ORDEN DE TRABAJO (OT): el mandante del lote
    ===================================================================== */
-const OT = { doc: null };
-const otMap = () => OT.doc ? new Map(OT.doc.items.map(x => [x.key, x])) : null;
+const OT = { docs: [], conflicts: new Set(), seq: 0 };
+function otMap() {                                                       // factura → línea de su OT (si figura en dos OT, gana la primera)
+  if (!OT.docs.length) return null; const m = new Map(); OT.conflicts = new Set();
+  for (const d of OT.docs) for (const x of d.items) { if (m.has(x.key)) { if (m.get(x.key).doc !== d) OT.conflicts.add(x.raw); } else m.set(x.key, { ...x, doc: d }); }
+  return m;
+}
 const samePerson = (a, b) => { const w = s => normTxt(s || '').replace(/[^A-Z ]/g, ' ').split(/\s+/).filter(x => x.length > 1); const A = w(a), B = w(b); if (!A.length || !B.length) return true; const [s1, s2] = A.length <= B.length ? [A, B] : [B, A]; return s1.every(x => s2.includes(x)); };
 function parseOT(lines) {
   const T = normTxt(lines.join(' \n ')), items = new Map(), myRuc = getMyRuc();
@@ -1867,40 +1894,49 @@ async function readOT(file) {
   finally { try { pdf.destroy(); } catch {} }
 }
 async function otAdd(files) {
-  const f = [...files].find(isPdf); if (!f) return toast('Elige el PDF de la OT', 'warn');
-  try {
-    const d = await readOT(f);
-    if (!d.items.length) return toast('No encontré líneas de facturas en ese PDF. ¿Es la OT?', 'bad', 6000);
-    OT.doc = { file: f, name: f.name, ...d };
-    batch && batch.items.forEach(it => { delete it.incManual; });       // la OT nueva decide de nuevo qué entra
-    toast(`OT ${d.num}: ${d.items.length} factura(s) leídas`, 'ok');
-  } catch (e) { toast('No se pudo leer la OT: ' + (e.message || e), 'bad'); }
+  const pdfs = [...files].filter(isPdf); if (!pdfs.length) return toast('Elige los PDF de las OT', 'warn');
+  let n = 0;
+  for (const f of pdfs) {
+    try {
+      const d = await readOT(f);
+      if (!d.items.length) { toast(`«${f.name}»: no encontré líneas de facturas. ¿Es una OT?`, 'bad', 6000); continue; }
+      OT.docs = OT.docs.filter(x => x.numFull !== d.numFull || !d.numFull);   // la misma OT subida otra vez la reemplaza
+      OT.docs.push({ id: ++OT.seq, file: f, name: f.name, ...d }); n++;
+      OT.docs.sort((x, y) => (x.numFull || x.num).localeCompare(y.numFull || y.num, undefined, { numeric: true }));   // carpetas en orden de OT
+    } catch (e) { toast(`No se pudo leer «${f.name}»: ${e.message || e}`, 'bad'); }
+  }
+  if (n) { batch && batch.items.forEach(it => { delete it.incManual; }); toast(`${n} OT leída(s)`, 'ok'); }
   otRender(); apChanged();
 }
 function otRender() {
-  const d = OT.doc, w = $('#otWrap'); show(w, !!d); show($('#optOtRelWrap'), !!d);
-  $('#otCount').textContent = d ? `OT ${d.num} · ${d.items.length} factura(s)` : '';
-  if (!d) { w.innerHTML = ''; return; }
-  const suma = d.items.reduce((t, x) => t + (x.total || 0), 0), cuadra = Math.abs(suma - d.total) <= 0.05;
-  w.innerHTML = `<div class="aprow !items-start">
+  const w = $('#otWrap'), has = OT.docs.length > 0; show(w, has); show($('#optOtRelWrap'), has); show($('#optSinOtWrap'), has);
+  $('#otCount').textContent = has ? `${OT.docs.length} OT · ${OT.docs.reduce((t, d) => t + d.items.length, 0)} factura(s)` : '';
+  w.innerHTML = OT.docs.map(d => {
+    const suma = d.items.reduce((t, x) => t + (x.total || 0), 0), cuadra = Math.abs(suma - d.total) <= 0.05;
+    return `<div class="aprow !items-start" data-ot="${d.id}">
     <span class="text-lg">📋</span>
     <div class="min-w-0 flex-1">
-      <div class="text-xs font-bold">OT N° ${esc(d.numFull || d.num)} <span class="font-normal text-slate-500">· ${esc(d.fecha)} · ${d.pages} hoja(s)</span></div>
+      <div class="text-xs font-bold">OT N° ${esc(d.numFull || d.num)} <span class="font-normal text-slate-500">· ${esc(d.fecha)} · ${d.pages} hoja(s) · ${esc(d.name)}</span></div>
       <div class="text-[11px] text-slate-600">${esc(d.clinica)}${d.ruc ? ' · RUC ' + esc(d.ruc) : ''}</div>
       <div class="flex flex-wrap gap-1 mt-1.5">${statChip(`${d.items.length} factura(s)`, d.items.length > 35 ? 'b-bad' : 'b-blue')}${statChip(`Total S/ ${fmtMoney(d.total)}`, 'b-gray')}${cuadra ? statChip('✔ las líneas suman el total', 'b-ok') : statChip(`⚠ las líneas suman S/ ${fmtMoney(suma)}`, 'b-warn')}${d.items.length > 35 ? statChip('⚠ más de 35', 'b-bad') : ''}</div>
-      <details class="mt-1.5"><summary>Ver las ${d.items.length} líneas de la OT</summary>
+      <details class="mt-1.5"><summary>Ver las ${d.items.length} líneas</summary>
         <div class="overflow-auto max-h-64 custom-scroll mt-1.5"><table class="dt"><thead><tr><th>N°</th><th>Factura</th><th>Paciente</th><th class="text-right">Total</th></tr></thead><tbody>
         ${d.items.map(x => `<tr><td class="px-2 text-slate-400">${x.n}</td><td class="px-2 mono font-bold">${esc(x.raw)}</td><td class="px-2">${esc(x.paciente)}</td><td class="px-2 num">${fmtMoney(x.total)}</td></tr>`).join('')}
         </tbody></table></div></details>
     </div>
-    <button class="btn btn-ghost btn-xs" id="otPv" title="Ver la OT">👁</button><button class="btn btn-danger btn-xs" id="otRm" title="Quitar la OT">✕</button></div>`;
-  $('#otPv').onclick = () => openPreview(d.file, 1);
-  $('#otRm').onclick = () => { OT.doc = null; batch && batch.items.forEach(it => { delete it.incManual; }); otRender(); apChanged(); };
+    <button class="btn btn-ghost btn-xs" data-otact="pv" title="Ver la OT">👁</button><button class="btn btn-danger btn-xs" data-otact="rm" title="Quitar esta OT">✕</button></div>`; }).join('');
 }
-const otBadge = it => !OT.doc ? '<span class="text-slate-300">—</span>' : it.ot ? `<span class="badge b-blue" title="${esc(it.ot.raw)} · ${esc(it.ot.paciente)} · S/ ${fmtMoney(it.ot.total)}">N° ${it.ot.n}</span>` : '<span class="badge b-gray" title="Esta factura no está en la OT">No está</span>';
+$('#otWrap').addEventListener('click', e => {
+  const b = e.target.closest('[data-otact]'); if (!b) return; const d = OT.docs.find(x => x.id === +b.closest('[data-ot]').dataset.ot); if (!d) return;
+  if (b.dataset.otact === 'pv') return openPreview(d.file, 1);
+  OT.docs = OT.docs.filter(x => x !== d); batch && batch.items.forEach(it => { delete it.incManual; }); otRender(); apChanged();
+});
+const otBadge = it => !OT.docs.length ? '<span class="text-slate-300">—</span>' : it.ot ? `<span class="badge b-blue" title="OT ${esc(it.ot.doc.num)} · ${esc(it.ot.raw)} · ${esc(it.ot.paciente)} · S/ ${fmtMoney(it.ot.total)}">${OT.docs.length > 1 ? 'OT ' + esc(it.ot.doc.num) + ' · ' : ''}N° ${it.ot.n}</span>` : '<span class="badge b-gray" title="Esta factura no está en ninguna OT">No está</span>';
 bindDrop($('#dzOt'), $('#inOt'), f => otAdd(f));
 $('#optOtRel').checked = store.get('otRel', true);
 $('#optOtRel').addEventListener('change', () => { store.set('otRel', $('#optOtRel').checked); renderLot(); });
+$('#optSinOt').checked = store.get('sinOt', true);
+$('#optSinOt').addEventListener('change', () => { store.set('sinOt', $('#optSinOt').checked); renderLot(); });
 
 /* Memoria: si corriges el paciente de una factura, la app lo recuerda (por RUC y serie-número) para la próxima vez */
 const pacKey = r => { const k = keyOfRow(r); return k && r.ruc ? r.ruc + '|' + k : ''; };
