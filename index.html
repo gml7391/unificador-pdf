@@ -109,6 +109,12 @@
   .pg.sel .n { color:#1d4ed8; }
   .pg .zoom { position:absolute; top:.55rem; right:.55rem; width:1.5rem; height:1.5rem; border-radius:999px; background:rgba(15,23,42,.65); color:#fff; font-size:.7rem; display:none; align-items:center; justify-content:center; }
   .pg:hover .zoom { display:flex; }
+  .opg { position:relative; display:flex; flex-direction:column; align-items:center; gap:.25rem; padding:.4rem; border-radius:.75rem; border:2px solid transparent; background:#fff; cursor:grab; transition:.12s; }
+  .opg:hover { border-color:#bfdbfe; } .opg.dragging { opacity:.35; } .opg.dropbefore { box-shadow:-4px 0 0 0 var(--brand); }
+  .opg img { width:100%; aspect-ratio:3/4; object-fit:contain; background:#f1f5f9; border-radius:4px; box-shadow:0 1px 3px rgba(15,23,42,.18); }
+  .opg .n { font-size:.72rem; font-weight:700; color:#475569; } .opg .src { font-size:.62rem; color:#94a3b8; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .opg .acts { display:flex; gap:.2rem; } .opg .acts button { width:1.55rem; height:1.55rem; border-radius:.45rem; border:1px solid #cbd5e1; background:#fff; font-size:.75rem; cursor:pointer; }
+  .opg .acts button:hover { background:#eff6ff; } .opg .acts button[data-o=del]:hover { background:#fef2f2; color:#dc2626; }
   .pg.sel::after { content:"✓"; position:absolute; top:.5rem; left:.5rem; width:1.3rem; height:1.3rem; border-radius:999px; background:var(--brand); color:#fff; font-size:.75rem; font-weight:800; display:flex; align-items:center; justify-content:center; }
 
   dialog { border:0; padding:0; border-radius:18px; box-shadow:0 25px 60px rgba(15,23,42,.35); max-width:calc(100vw - 1.5rem); max-height:calc(100vh - 1.5rem); color:#0f172a; }
@@ -156,6 +162,7 @@
       <button class="tab" role="tab" data-tab="facturas" aria-selected="true"><span class="ico">🧾</span><span>Extractor de facturas<small class="block text-[10px] font-normal text-slate-400">1ª página · datos · Excel</small></span></button>
       <button class="tab" role="tab" data-tab="unir" aria-selected="false"><span class="ico">📚</span><span>Unir PDFs<small class="block text-[10px] font-normal text-slate-400">Todas las páginas</small></span></button>
       <button class="tab" role="tab" data-tab="dividir" aria-selected="false"><span class="ico">✂️</span><span>Dividir / Extraer<small class="block text-[10px] font-normal text-slate-400">Rangos y separación</small></span></button>
+      <button class="tab" role="tab" data-tab="organizar" aria-selected="false"><span class="ico">🗂️</span><span>Organizar páginas<small class="block text-[10px] font-normal text-slate-400">Ordenar · girar · quitar hojas</small></span></button>
       <button class="tab" role="tab" data-tab="tedef" aria-selected="false"><span class="ico">🧮</span><span>Cruce con trama TEDEF<small class="block text-[10px] font-normal text-slate-400">Trama vs. facturas PDF</small></span></button>
       <div class="hidden lg:block mt-3 p-3 rounded-xl bg-white border border-slate-200 text-[11px] text-slate-500 leading-relaxed">
         <b class="text-slate-700">🔒 Privacidad</b><br>
@@ -206,6 +213,21 @@
       <p class="hint -mt-1">Arrastra las filas por el asa <b>⋮⋮</b> para cambiar el orden. Pulsa <b>👁</b> para ver la 1ª hoja antes de procesar.</p>
       <div id="qFactList" class="max-h-72 overflow-y-auto custom-scroll space-y-1.5 pr-1"></div>
     </div>
+  </div>
+
+  <!-- Orden de trabajo (OT) -->
+  <div class="card p-5 space-y-4">
+    <div class="flex flex-wrap items-center justify-between gap-2">
+      <h3 class="font-bold text-sm flex items-center gap-2"><span class="step !bg-indigo-100 !text-indigo-700">📋</span> Orden de trabajo (OT) <span class="badge b-gray">opcional</span></h3>
+      <span id="otCount" class="text-xs text-slate-500"></span>
+    </div>
+    <p class="text-xs text-slate-600 -mt-2">Sube la <b>OT</b> (el mandante). Con OT, <b>solo pasan las facturas que están en la OT</b> y en <b>su mismo orden</b> (máx. 35). Las aprobaciones, importes y pacientes se revisan contra la OT, pero <b>tú decides qué guardar</b> con la columna ✔.</p>
+    <div id="dzOt" class="dz !py-5" tabindex="0" role="button" aria-label="Seleccionar la OT">
+      <p class="text-sm font-bold text-slate-700">Arrastra aquí el PDF de la OT</p>
+      <p class="text-xs text-slate-500 mt-1">o haz clic para elegirlo · si subes otra, reemplaza a la anterior</p>
+      <input type="file" id="inOt" accept="application/pdf,.pdf" class="is-hidden">
+    </div>
+    <div id="otWrap" class="is-hidden"></div>
   </div>
 
   <!-- Aprobaciones -->
@@ -296,9 +318,12 @@
       <div class="flex flex-wrap items-start justify-between gap-2">
         <div>
           <p class="text-sm font-bold text-blue-950">Guardar el lote</p>
-          <p class="text-xs text-blue-900/80 mt-0.5">Así quedará dentro de la carpeta que elijas. Solo entran las facturas marcadas en la tabla (columna ✔), ordenadas por número.</p>
+          <p class="text-xs text-blue-900/80 mt-0.5">Así quedará dentro de la carpeta que elijas. Solo entran las facturas marcadas en la tabla (columna ✔), en el orden de la OT si la subiste; si no, por número.</p>
         </div>
-        <label class="chk !text-xs"><input type="checkbox" id="optXlsxRel"><span>Incluir Excel de relación</span></label>
+        <div class="flex flex-col gap-1.5">
+          <label class="chk !text-xs"><input type="checkbox" id="optXlsxRel"><span>Incluir Excel de relación</span></label>
+          <label class="chk !text-xs is-hidden" id="optOtRelWrap"><input type="checkbox" id="optOtRel"><span>Incluir el PDF de la OT</span></label>
+        </div>
       </div>
       <div id="treePreview" class="bg-white border border-blue-100 rounded-lg p-3 font-mono text-[11.5px] leading-relaxed text-slate-700 overflow-x-auto custom-scroll"></div>
       <div class="grid gap-3 sm:grid-cols-2">
@@ -327,7 +352,7 @@
       <div class="overflow-auto max-h-[28rem] custom-scroll border border-slate-200 rounded-xl">
         <table class="dt">
           <thead><tr>
-            <th class="sticky-c">N°</th><th title="Incluir en el lote">✔</th><th>Archivo</th><th>Tipo</th><th>RUC emisor</th><th>Razón social</th><th>Clínica</th><th>Serie-Número</th><th>Aprobación</th><th>Paciente</th><th>Fecha</th><th>Mon.</th><th>Subtotal</th><th>IGV</th><th>Total</th><th>Avisos</th><th>Método</th><th></th>
+            <th class="sticky-c">N°</th><th title="Incluir en el lote">✔</th><th>Archivo</th><th>Tipo</th><th>RUC emisor</th><th>Razón social</th><th>Clínica</th><th>Serie-Número</th><th>OT</th><th>Aprobación</th><th>Paciente</th><th>Fecha</th><th>Mon.</th><th>Subtotal</th><th>IGV</th><th>Total</th><th>Avisos</th><th>Método</th><th></th>
           </tr></thead>
           <tbody id="dataBody"></tbody>
         </table>
@@ -433,6 +458,39 @@
         </div>
       </div>
       <div id="progSplit" class="is-hidden bg-slate-50 p-4 rounded-xl border border-slate-200"></div>
+    </div>
+  </div>
+</section>
+
+<!-- ======================================================
+     ORGANIZAR PÁGINAS
+     ====================================================== -->
+<section id="pane-organizar" class="space-y-5 is-hidden" role="tabpanel">
+  <div class="card p-5">
+    <h2 class="text-lg font-bold">Organizar páginas</h2>
+    <p class="text-sm text-slate-600 mt-1">Carga uno o varios PDF y <b>arrastra las hojas</b> para cambiar su orden. También puedes <b>girarlas</b> y <b>quitarlas</b>. Las hojas se copian tal cual, sin perder calidad.</p>
+  </div>
+  <div class="card p-5 space-y-4">
+    <div id="dzOrg" class="dz" tabindex="0" role="button" aria-label="Seleccionar PDF para organizar">
+      <p class="text-sm font-bold text-slate-700">Arrastra aquí uno o varios PDF</p>
+      <p class="text-xs text-slate-500 mt-1">sus hojas se agregan al final · puedes seguir agregando</p>
+      <input type="file" id="inOrg" multiple accept="application/pdf,.pdf" class="is-hidden">
+    </div>
+    <div id="orgTools" class="is-hidden space-y-3">
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <span class="text-xs font-semibold text-slate-700"><span id="orgCount">0</span> hoja(s) · arrastra para ordenar</span>
+        <div class="flex flex-wrap gap-1.5">
+          <button class="btn btn-ghost btn-xs" id="orgRev">⇅ Invertir orden</button>
+          <button class="btn btn-ghost btn-xs" id="orgRotAll">⟳ Girar todas</button>
+          <button class="btn btn-danger btn-xs" id="orgClear">Vaciar</button>
+        </div>
+      </div>
+      <div id="orgGrid" class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 xl:grid-cols-7 gap-2 max-h-[34rem] overflow-y-auto custom-scroll p-1 border border-slate-200 rounded-xl bg-slate-50"></div>
+      <div class="grid gap-3 sm:grid-cols-[1fr_auto] items-end">
+        <div><label class="lbl" for="orgName">Nombre del PDF</label><input id="orgName" class="field" placeholder="Documento_organizado.pdf"></div>
+        <button id="btnOrgSave" class="btn btn-primary !py-3">⬇ Descargar PDF organizado</button>
+      </div>
+      <div id="progOrg" class="is-hidden bg-slate-50 p-4 rounded-xl border border-slate-200"></div>
     </div>
   </div>
 </section>
@@ -810,7 +868,7 @@ function bindDrop(zone, input, onFiles, extraInputs = []) {
 // ---------- Navegación por pestañas ----------
 function switchTab(id) {
   $$('.tab').forEach(t => t.setAttribute('aria-selected', String(t.dataset.tab === id)));
-  ['facturas', 'unir', 'dividir', 'tedef'].forEach(t => show($('#pane-' + t), t === id));
+  ['facturas', 'unir', 'dividir', 'organizar', 'tedef'].forEach(t => show($('#pane-' + t), t === id));
   store.set('tab', id);
 }
 $$('.tab').forEach(t => t.addEventListener('click', () => switchTab(t.dataset.tab)));
@@ -1036,6 +1094,8 @@ function computeFlags(r) {
   if (r.total == null) f.push(['Sin total', 'warn']);
   else if (r.totalEstimado) f.push(['Total estimado', 'warn']);
   if (r.subtotal != null && r.igv != null && r.total != null && Math.abs(r.subtotal + r.igv - r.total) > 0.06) f.push(['Subtotal+IGV ≠ Total', 'warn']);
+  if (r.otTotal != null && r.total != null && Math.abs(r.otTotal - r.total) > 0.05) f.push([`Total ≠ OT (${fmtMoney(r.otTotal)})`, 'warn']);
+  if (r.otPac && r.pacOrig && !samePerson(r.pacOrig, r.otPac) && !r.pacManual) f.push([`Paciente en la factura: ${r.pacOrig} (se usa el de la OT)`, 'warn']);
   (r.notas || []).forEach(n => f.push([n, 'warn']));
   return f;
 }
@@ -1226,6 +1286,7 @@ function readOpts() {
     mergedName: $('#mergedName2').value.trim(), extract: $('#optExtract').checked, ocr: $('#optOcr').checked, forceOcr: $('#optForceOcr').checked,
     ai: $('#optAi').checked && !!getKey() };
 }
+const fullSerie = s => { const m = /^([A-Z0-9]{4})-(\d{1,8})$/i.exec(String(s || '').trim()); return m ? `${m[1].toUpperCase()}-${m[2].padStart(8, '0')}` : (s || ''); };   // F030-6042 → F030-00006042
 const namePattern = o => o.mode === 'serie' ? '{serie}' : o.mode === 'ruc_serie' ? '{ruc}_{serie}' : o.mode === 'expediente' ? '{abrev} {serie} {paciente}' : (o.pattern || '{nombre}');
 function buildOutName(it, o, sinPaciente = false) {
   const base = it.name.replace(/\.pdf$/i, ''), r = it.row;
@@ -1233,7 +1294,7 @@ function buildOutName(it, o, sinPaciente = false) {
   if (o.mode !== 'original' && r) {
     const pat = namePattern(o);
     let missing = false;
-    const v = { nombre: base, ruc: r.ruc, serie: r.serie, fecha: (r.fecha || '').replace(/\//g, '-'), total: r.total != null ? r.total.toFixed(2) : '', abrev: (r.abrev || '').trim(), paciente: sinPaciente ? '' : (r.paciente || '').trim() };
+    const v = { nombre: base, ruc: r.ruc, serie: fullSerie(r.serie), fecha: (r.fecha || '').replace(/\//g, '-'), total: r.total != null ? r.total.toFixed(2) : '', abrev: (r.abrev || '').trim(), paciente: sinPaciente ? '' : (r.paciente || '').trim() };
     name = pat.replace(/\{(\w+)\}/g, (_, k) => { const x = v[k]; if (x === undefined || x === '') { if (k !== 'paciente') missing = true; return ''; } return x; })
       .replace(/\s{2,}/g, ' ').replace(/[\s_-]+$/, '').replace(/^[\s_-]+/, '');
     if (missing || !sanitizeName(name).replace(/[-_ ]/g, '')) name = base;
@@ -1292,7 +1353,9 @@ async function analyzeFirstPage(buf, o, setStatus, fileName = '') {
         if (ls.join('').replace(/\s/g, '').length < 25) {
           if (ocrDone >= 2 || !(o.ocr || /\{paciente\}/.test(namePattern(o)))) continue;
           ocrLog = m => { if (m.status === 'recognizing text') setStatus(`OCR hoja ${p}: ${Math.round(m.progress * 100)}%`); };
-          ls = (await ocrCanvas(await renderPage(pg, { maxSide: 2400 }))).split(/\n/).map(x => x.trim()).filter(Boolean); ocrDone++;
+          ocrDone++;
+          try { ls = (await ocrCanvas(await renderPage(pg, { maxSide: 2400 }))).split(/\n/).map(x => x.trim()).filter(Boolean); }
+          catch (e) { ocrDone = 99; continue; }                           // si el OCR no está disponible, no se pierde el resto de la lectura
         }
         const v = findPaciente(ls); if (v) { r.paciente = v; r.pacHoja = p; }
       }
@@ -1314,7 +1377,7 @@ async function processInvoices() {
   if (busyFact || !qFact.items.length) return;
   const o = readOpts(); saveOpts();
   if (o.mode !== 'original') o.extract = true;
-  if (AP.list.length) o.extract = true;                                  // para cruzar con las aprobaciones hace falta la serie-número
+  if (AP.list.length || OT.doc) o.extract = true;                                  // para cruzar con las aprobaciones hace falta la serie-número
   busyFact = true; $('#btnProcess').disabled = true; show($('#resFact'), false);
   qFact.items.forEach(i => { i.status = 'idle'; i.error = ''; }); qFact.render();
   progFact.start('Iniciando…');
@@ -1336,7 +1399,7 @@ async function processInvoices() {
         const single = await subsetDoc(src, [0]);                       // copia directa de la página 1, sin recomprimir
         rec.singleBytes = await single.save();
         if (o.extract) {
-          try { rec.row = await analyzeFirstPage(buf, o, msg => progFact.text(`${msg} ${label}`), e.file.name); }
+          try { rec.row = await analyzeFirstPage(buf, o, msg => progFact.text(`${msg} ${label}`), e.file.name); recallPac(rec.row); }
           catch (ex) { rec.row = { tipo: '', ruc: rucFromName(e.file.name), rucCliente: '', razon: '', paciente: '', abrev: '', serie: serieFromName(e.file.name), fecha: '', moneda: '', subtotal: null, igv: null, total: null, notas: [], metodo: 'Error', error: 'Error de lectura: ' + (ex.message || ex) }; }
         }
         e.status = 'ok';
@@ -1401,6 +1464,7 @@ function renderTable() {
       <td class="text-center"><input type="checkbox" data-act="inc" ${it.incluir ? 'checked' : ''} aria-label="Incluir en el lote" class="w-4 h-4 accent-blue-600"></td>
       <td class="max-w-[14rem]"><div class="truncate font-medium px-1" title="${esc(it.name)}">${esc(it.name)}</div></td>
       ${cell('tipo')}${cell('ruc', 'mono')}${cell('razon')}${cell('abrev', 'font-bold')}${cell('serie', 'mono font-bold')}
+      <td data-role="ot" class="whitespace-nowrap">${otBadge(it)}</td>
       <td data-role="ap" class="min-w-[8rem]">${apBadge(it)}</td>
       ${cell('paciente')}${cell('fecha')}
       <td><select class="cell" data-f="moneda" aria-label="moneda">${['PEN', 'USD', 'EUR'].map(m => `<option ${r.moneda === m ? 'selected' : ''}>${m}</option>`).join('')}</select></td>
@@ -1421,7 +1485,7 @@ $('#dataBody').addEventListener('input', e => {
     if (r.ruc) { if (v) map[r.ruc] = v; else delete map[r.ruc]; store.set('abrevMap', map); }
     batch.items.forEach(x => { if (x.row && x.row !== r && r.ruc && x.row.ruc === r.ruc) { x.row.abrev = v; const t = $(`#dataBody tr[data-id="${x.id}"]`), inp = t && t.querySelector('[data-f=abrev]'); if (inp) inp.value = v; if (t) { t.className = rowClass(x.row); t.querySelector('[data-role=flags]').innerHTML = flagsHtml(x.row); } } });
   }
-  if (f === 'paciente') r.paciente = el.value.toUpperCase();
+  if (f === 'paciente') { r.paciente = el.value.toUpperCase(); r.pacManual = !!r.paciente; memPac(r, r.paciente); }
   tr.className = rowClass(r); tr.querySelector('[data-role=flags]').innerHTML = flagsHtml(r); updateTotals();
 });
 $('#dataBody').addEventListener('click', e => {
@@ -1456,8 +1520,9 @@ $('#btnDlZip').onclick = async () => {
 /* --- Lote: EXPEDIENTES/ (originales completos) · 1ª hojas sueltas · PARA RELACION/ (facturas unidas + aprobaciones unidas + Excel) --- */
 const DIR_EXP = 'EXPEDIENTES', DIR_REL = 'PARA RELACION';
 const keyOrder = it => { const k = keyOfRow(it.row); if (!k) return null; const [se, nu] = k.split('-'); return [se, +nu]; };
-function lotItems() {                                                    // incluidas, ordenadas por serie y número
+function lotItems() {                                                    // incluidas: en el orden de la OT si hay OT; si no, por serie y número
   const inc = batch.items.filter(it => it.singleBytes && it.incluir);
+  if (OT.doc) return inc.map((it, i) => ({ it, i, n: it.ot ? it.ot.n : 1e6, k: keyOrder(it) })).sort((a, b) => a.n - b.n || (a.k && b.k ? a.k[0].localeCompare(b.k[0]) || a.k[1] - b.k[1] : a.i - b.i)).map(x => x.it);
   return inc.map((it, i) => ({ it, i, k: keyOrder(it) })).sort((a, b) => !a.k || !b.k ? (!a.k - !b.k) || a.i - b.i : a.k[0].localeCompare(b.k[0]) || a.k[1] - b.k[1]).map(x => x.it);
 }
 function lotClinic() {                                                   // nombre de la clínica más frecuente en el lote
@@ -1465,7 +1530,7 @@ function lotClinic() {                                                   // nomb
   return Object.entries(c).sort((a, b) => b[1] - a[1])[0]?.[0] || '';
 }
 const lotNames = () => { const c = lotClinic(), custom = batch.opts.mergedName.trim();
-  return { fac: ensurePdfExt(custom || `FACTURAS UNIDAS ${c}`.trim(), 'FACTURAS UNIDAS.pdf'), ap: ensurePdfExt(`APROBACIONES UNIDAS ${c}`.trim(), 'APROBACIONES UNIDAS.pdf'), xl: sanitizeName(`RELACION ${c}`.trim()) + '.xlsx' }; };
+  return { ot: sanitizeName(`OT ${OT.doc?.num || ''}`.trim()) + '.pdf', fac: ensurePdfExt(custom || `FACTURAS UNIDAS ${c}`.trim(), 'FACTURAS UNIDAS.pdf'), ap: ensurePdfExt(`APROBACIONES UNIDAS ${c}`.trim(), 'APROBACIONES UNIDAS.pdf'), xl: sanitizeName(`RELACION ${c}`.trim()) + '.xlsx' }; };
 const cacheGet = (k, sig) => batch[k] && batch[k].sig === sig ? batch[k].blob : null;
 async function buildMergedLot(items = lotItems()) {
   const sig = items.map(i => i.id).join(','), hit = cacheGet('_mergedC', sig); if (hit) return hit;
@@ -1473,7 +1538,12 @@ async function buildMergedLot(items = lotItems()) {
   for (const it of items) { const d = await PDFLib.PDFDocument.load(it.singleBytes); const [pg] = await out.copyPages(d, [0]); out.addPage(pg); }
   const blob = pdfBlob(await out.save()); batch._mergedC = { sig, blob }; return blob;
 }
-function apOrdered() {                                                   // primero el correo con la factura de número más bajo
+function apOrdered() {                                                   // primero el correo con la factura de número más bajo (con OT: solo los de la OT, en su orden)
+  const otm = otMap();
+  if (otm) {
+    const first = ap => Math.min(...ap.facturas.map(f => otm.get(f.key)?.n ?? Infinity));
+    return AP.list.filter(ap => isFinite(first(ap))).sort((a, b) => first(a) - first(b));
+  }
   const low = ap => ap.facturas.map(f => [f.serie, +f.num]).sort((a, b) => a[0].localeCompare(b[0]) || a[1] - b[1])[0] || ['~', 0];
   return [...AP.list].sort((a, b) => { const x = low(a), y = low(b); return x[0].localeCompare(y[0]) || x[1] - y[1]; });
 }
@@ -1489,7 +1559,8 @@ async function packEntries({ full = true, one = true, merged = true, aprob = tru
   if (full) items.forEach(it => out.push({ dir: DIR_EXP, name: it.outName, data: it.file }));
   if (one) items.forEach(it => out.push({ dir: '', name: it.outNameOne, data: it.singleBytes }));
   if (merged && items.length) { progDl.text('Uniendo facturas…'); out.push({ dir: DIR_REL, name: n.fac, data: await buildMergedLot(items) }); }
-  if (aprob && AP.list.length) { progDl.text('Uniendo aprobaciones…'); out.push({ dir: DIR_REL, name: n.ap, data: await buildAprobMerged() }); }
+  if (aprob && apOrdered().length) { progDl.text('Uniendo aprobaciones…'); out.push({ dir: DIR_REL, name: n.ap, data: await buildAprobMerged() }); }
+  if (OT.doc && $('#optOtRel').checked) out.push({ dir: DIR_REL, name: n.ot, data: OT.doc.file });
   if (excel && window.XLSX && items.some(i => i.row)) out.push({ dir: DIR_REL, name: n.xl, data: new Blob([XLSX.write(buildExcelWb(true), { bookType: 'xlsx', type: 'array', cellDates: true })]) });
   return out;
 }
@@ -1529,11 +1600,11 @@ $('#btnDlMerged').onclick = () => withDl($('#btnDlMerged'), async () => { if (!l
 function tableMatrix(onlyLot = false) {
   computeOutNames();
   return (onlyLot ? lotItems() : batch.items).filter(i => i.row).map((it, n) => {
-    const r = it.row; return [n + 1, it.name, it.outName || '', r.tipo, r.ruc, r.razon, r.abrev || '', r.rucCliente, r.serie, r.paciente || '', r.fecha, r.moneda, r.subtotal, r.igv, r.total, apText(it), it.incluir ? 'Sí' : 'No', computeFlags(r).map(f => f[0]).join('; '), r.metodo || ''];
+    const r = it.row; return [n + 1, it.name, it.outName || '', r.tipo, r.ruc, r.razon, r.abrev || '', r.rucCliente, r.serie, r.paciente || '', r.fecha, r.moneda, r.subtotal, r.igv, r.total, it.ot ? it.ot.n : '', it.ot ? it.ot.total : '', apText(it), it.incluir ? 'Sí' : 'No', computeFlags(r).map(f => f[0]).join('; '), r.metodo || ''];
   });
 }
-const XL_HEAD = ['N°', 'Archivo original', 'Archivo generado', 'Tipo', 'RUC emisor', 'Razón social', 'Clínica', 'RUC cliente', 'Serie-Número', 'Paciente', 'Fecha emisión', 'Moneda', 'Subtotal', 'IGV', 'Total', 'Aprobación', 'Incluida', 'Avisos', 'Método'];
-const XL_DATE = XL_HEAD.indexOf('Fecha emisión'), XL_AMT = ['Subtotal', 'IGV', 'Total'].map(h => XL_HEAD.indexOf(h));
+const XL_HEAD = ['N°', 'Archivo original', 'Archivo generado', 'Tipo', 'RUC emisor', 'Razón social', 'Clínica', 'RUC cliente', 'Serie-Número', 'Paciente', 'Fecha emisión', 'Moneda', 'Subtotal', 'IGV', 'Total', 'N° OT', 'Total OT', 'Aprobación', 'Incluida', 'Avisos', 'Método'];
+const XL_DATE = XL_HEAD.indexOf('Fecha emisión'), XL_AMT = ['Subtotal', 'IGV', 'Total', 'Total OT'].map(h => XL_HEAD.indexOf(h));
 function buildExcelWb(onlyLot = false) {
   const body = tableMatrix(onlyLot).map(row => row.map((v, c) => {
     if (c === XL_DATE) { const d = parseDMY(v); return d ? new Date(d.y, d.m - 1, d.d, 12) : v; }   // fecha real de Excel
@@ -1544,7 +1615,7 @@ function buildExcelWb(onlyLot = false) {
     if (row[XL_DATE] instanceof Date) ws[XLSX.utils.encode_cell({ r: i + 1, c: XL_DATE })].z = 'dd/mm/yyyy';
     XL_AMT.forEach(c => { const cell = ws[XLSX.utils.encode_cell({ r: i + 1, c })]; if (cell && cell.t === 'n') cell.z = '#,##0.00'; });
   });
-  ws['!cols'] = [5, 34, 50, 12, 14, 36, 22, 14, 16, 34, 12, 8, 12, 12, 13, 40, 9, 40, 16].map(w => ({ wch: w }));
+  ws['!cols'] = [5, 34, 50, 12, 14, 36, 22, 14, 16, 34, 12, 8, 12, 12, 13, 7, 12, 40, 9, 40, 16].map(w => ({ wch: w }));
   ws['!autofilter'] = { ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: body.length, c: XL_HEAD.length - 1 } }) };
   const t = totalsByCurrency();
   const ws2 = XLSX.utils.aoa_to_sheet([['Moneda', 'Comprobantes', 'Total'], ...Object.entries(t).map(([k, v]) => [k, v.n, Math.round(v.total * 100) / 100])]);
@@ -1644,6 +1715,8 @@ async function apAdd(files) {
   await disposeOcr(); apChanged();
 }
 function apChanged() {
+  if (!AP.list.length && !OT.doc && batch) { applyApprovals(); if (batch.opts.extract) renderTable(); renderLot(); apRender(); return; }
+  if (OT.doc && $('#nameMode').value === 'original') { $('#nameMode').value = 'expediente'; syncOptsUi(); saveOpts(); if (batch) batch.opts.mode = 'expediente'; }
   if (AP.list.length && $('#nameMode').value === 'original') { $('#nameMode').value = 'expediente'; syncOptsUi(); saveOpts(); if (batch) batch.opts.mode = 'expediente'; toast('Nombre de los archivos: CLÍNICA SERIE PACIENTE', 'info'); } if (batch) { applyApprovals(); if (batch.opts.extract) renderTable(); renderLot(); } apRender(); }
 const ST = { aprobada: ['✔ Aprobada', 'b-ok'], observada: ['⛔ Observada', 'b-bad'], revisar: ['❓ Revisar', 'b-warn'], sin: ['⚠ Sin aprobación', 'b-warn'] };
 function apRender() {
@@ -1678,12 +1751,20 @@ function apMap() {                                                       // fact
   return map;
 }
 function applyApprovals() {
-  if (!batch) return; const map = apMap(), seen = new Map(), has = AP.list.length > 0;
+  if (!batch) return; const map = apMap(), seen = new Map(), has = AP.list.length > 0, otm = otMap();
   for (const it of batch.items) {
     const k = keyOfRow(it.row); it.dup = null;
     if (k) { if (seen.has(k)) it.dup = seen.get(k); else seen.set(k, it); }
     it.ap = has ? (k && map.get(k)) || { status: 'sin' } : null;
-    const def = !it.dup && (!has || it.ap.status === 'aprobada');
+    it.ot = otm ? (k && otm.get(k)) || null : undefined;
+    const r = it.row;
+    if (r) {                                                             // la OT completa o corrige el paciente y aporta su importe
+      if (r.pacOrig === undefined) r.pacOrig = r.paciente || '';
+      r.otPac = it.ot ? it.ot.paciente : ''; r.otTotal = it.ot ? it.ot.total : null;
+      if (!r.pacManual) r.paciente = (it.ot && it.ot.paciente) ? it.ot.paciente : r.pacOrig;
+    }
+    // con OT: entra lo que está en la OT (aunque el correo venga mal); sin OT: entra lo aprobado
+    const def = !it.dup && (otm ? !!it.ot : (!has || it.ap.status === 'aprobada'));
     it.incluir = it.incManual ?? def;
   }
 }
@@ -1709,11 +1790,26 @@ function renderLot() {
   const apSinPdf = [...map.values()].filter(f => f.status === 'aprobada' && !keysPdf.has(f.key));
   const byStatus = s => batch.items.filter(i => !i.dup && !i.incluir && i.ap?.status === s), dups = batch.items.filter(i => i.dup);
   const rucs = new Set(batch.items.filter(i => !i.dup).map(i => i.row?.ruc).filter(Boolean));
-  const lines = [];
-  if (has) lines.push(`<div class="flex flex-wrap gap-2">${statChip(`✉️ ${AP.list.length} correo(s)`, 'b-blue')}${statChip(`✔ ${items.length} en el lote`, 'b-ok')}${byStatus('observada').length ? statChip(`⛔ ${byStatus('observada').length} observada(s) fuera`, 'b-bad') : ''}${byStatus('sin').length ? statChip(`⚠ ${byStatus('sin').length} sin aprobación fuera`, 'b-warn') : ''}${apSinPdf.length ? statChip(`📭 ${apSinPdf.length} aprobada(s) sin PDF`, 'b-warn') : ''}</div>`);
-  if (apSinPdf.length) lines.push(`<p><b>Aprobadas en el correo, pero no subiste su PDF:</b> ${apSinPdf.map(f => `<span class="mono font-bold">${esc(f.serie)}-${esc(f.num)}</span>`).join(', ')}</p>`);
+  const lines = [], otm = otMap();
+  if (otm) {                                                              // revisión contra la OT
+    const d = OT.doc, enLote = new Set(items.map(i => keyOfRow(i.row)));
+    const sinPdf = d.items.filter(x => !keysPdf.has(x.key)), noEnLote = d.items.filter(x => keysPdf.has(x.key) && !enLote.has(x.key));
+    const fuera = batch.items.filter(i => !i.dup && i.row && !i.ot), conDif = items.filter(i => i.row && computeFlags(i.row).some(f => /OT/.test(f[0])));
+    const sinAp = has ? items.filter(i => i.ap && i.ap.status !== 'aprobada') : [];
+    const sumLote = items.reduce((t, i) => t + (i.ot ? i.ot.total : 0), 0), okAll = !sinPdf.length && !noEnLote.length && !conDif.length && !sinAp.length;
+    lines.push(`<div class="flex flex-wrap gap-2">${statChip(`📋 OT ${esc(d.num)} · ${d.items.length} línea(s)`, 'b-blue')}${statChip(`✔ ${items.length} en el lote`, items.length > 35 ? 'b-bad' : 'b-ok')}${sinPdf.length ? statChip(`📭 ${sinPdf.length} sin PDF`, 'b-warn') : ''}${conDif.length ? statChip(`⚠ ${conDif.length} con diferencias`, 'b-warn') : ''}${sinAp.length ? statChip(`✉️ ${sinAp.length} sin aprobación en correo`, 'b-warn') : ''}${fuera.length ? statChip(`🚫 ${fuera.length} PDF fuera de la OT`, 'b-gray') : ''}${okAll ? statChip('✅ Todo cuadra con la OT', 'b-ok') : ''}</div>`);
+    if (items.length > 35) lines.push(`<p class="text-red-700 font-semibold">⚠ El lote tiene ${items.length} facturas: el máximo por OT es 35.</p>`);
+    lines.push(`<p>Suma del lote según la OT: <b>S/ ${fmtMoney(sumLote)}</b> de <b>S/ ${fmtMoney(d.total)}</b> ${Math.abs(sumLote - (d.total || 0)) <= 0.05 ? '✔' : `<span class="text-amber-700">(faltan S/ ${fmtMoney((d.total || 0) - sumLote)})</span>`}</p>`);
+    if (sinPdf.length) lines.push(`<p><b>Líneas de la OT sin PDF:</b> ${sinPdf.map(x => `<span class="mono font-bold">N° ${x.n} ${esc(x.serie)}-${esc(x.num)}</span> <span class="text-slate-500">${esc(x.paciente)}</span>`).join(' · ')}</p>`);
+    if (noEnLote.length) lines.push(`<p><b>Están en la OT pero las desmarcaste:</b> ${noEnLote.map(x => `<span class="mono font-bold">N° ${x.n} ${esc(x.serie)}-${esc(x.num)}</span>`).join(' · ')}</p>`);
+    if (conDif.length) lines.push(`<p><b>Con diferencias frente a la OT (revísalas):</b> ${conDif.map(i => `<span class="mono font-bold">N° ${i.ot.n} ${esc(i.row.serie)}</span> <span class="text-slate-500">— ${esc(computeFlags(i.row).filter(f => /OT/.test(f[0])).map(f => f[0]).join('; '))}</span>`).join(' · ')}</p>`);
+    if (sinAp.length) lines.push(`<p><b>En la OT pero sin aprobación clara en los correos</b> (igual entran; revísalas): ${sinAp.map(i => `<span class="mono font-bold">N° ${i.ot ? i.ot.n : '?'} ${esc(i.row.serie)}</span> <span class="text-slate-500">(${esc(apText(i))})</span>`).join(' · ')}</p>`);
+    if (fuera.length) lines.push(`<p><b>PDF que no están en esta OT (quedan fuera):</b> ${fuera.map(i => `<span class="mono font-bold">${esc(i.row.serie || i.name)}</span>`).join(', ')}</p>`);
+  }
+  if (has && !otm) lines.push(`<div class="flex flex-wrap gap-2">${statChip(`✉️ ${AP.list.length} correo(s)`, 'b-blue')}${statChip(`✔ ${items.length} en el lote`, 'b-ok')}${byStatus('observada').length ? statChip(`⛔ ${byStatus('observada').length} observada(s) fuera`, 'b-bad') : ''}${byStatus('sin').length ? statChip(`⚠ ${byStatus('sin').length} sin aprobación fuera`, 'b-warn') : ''}${apSinPdf.length ? statChip(`📭 ${apSinPdf.length} aprobada(s) sin PDF`, 'b-warn') : ''}</div>`);
+  if (apSinPdf.length && !otm) lines.push(`<p><b>Aprobadas en el correo, pero no subiste su PDF:</b> ${apSinPdf.map(f => `<span class="mono font-bold">${esc(f.serie)}-${esc(f.num)}</span>`).join(', ')}</p>`);
   if (byStatus('observada').length) lines.push(`<p><b>Observadas (no entran al lote):</b> ${byStatus('observada').map(i => `<span class="mono font-bold">${esc(i.row.serie)}</span> <span class="text-slate-500">— ${esc((i.ap.motivo || '').slice(0, 120))}</span>`).join(' · ')}</p>`);
-  if (byStatus('sin').length) lines.push(`<p><b>Sin aprobación en ningún correo (no entran):</b> ${byStatus('sin').map(i => `<span class="mono font-bold">${esc(i.row.serie || i.name)}</span>`).join(', ')}. Si sí corresponde, márcala en la tabla (columna ✔).</p>`);
+  if (byStatus('sin').length && !otm) lines.push(`<p><b>Sin aprobación en ningún correo (no entran):</b> ${byStatus('sin').map(i => `<span class="mono font-bold">${esc(i.row.serie || i.name)}</span>`).join(', ')}. Si sí corresponde, márcala en la tabla (columna ✔).</p>`);
   if (dups.length) lines.push(`<p><b>Duplicadas:</b> ${dups.map(i => `<span class="mono font-bold">${esc(i.row.serie)}</span> (${esc(i.name)})`).join(' · ')}. Quítalas con ✕ en la tabla; no hace falta volver a subir nada.</p>`);
   if (rucs.size > 1) lines.push(`<p class="text-red-700 font-semibold">⚠ Hay más de una clínica en este lote (RUC ${[...rucs].map(esc).join(', ')}). Revisa que no se haya colado un archivo de otra clínica.</p>`);
   show(sm, lines.length > 0);
@@ -1726,14 +1822,164 @@ function renderLot() {
   $('#treePreview').innerHTML = !items.length ? '<span class="tree-dim">No hay facturas marcadas para incluir.</span>' :
     `<div class="tree-row tree-dir">📁 (tu carpeta)</div>
      <div class="tree-row tree-dir">├─ 📁 ${DIR_EXP} <span class="tree-dim font-normal">· ${items.length} expediente(s) completos, originales, con el paciente</span></div>${list(names, '│&nbsp;&nbsp;&nbsp;&nbsp;')}
-     <div class="tree-row">├─ 📄 <span class="tree-dim">${items.length} factura(s) de 1 hoja, sin el nombre del paciente:</span></div>${list(namesOne, '│&nbsp;&nbsp;&nbsp;&nbsp;')}
+     <div class="tree-row">├─ 📄 <span class="tree-dim">${items.length} factura(s) de 1 hoja, sin el nombre del paciente${OT.doc ? ', en el orden de la OT' : ''}:</span></div>${list(namesOne, '│&nbsp;&nbsp;&nbsp;&nbsp;')}
      <div class="tree-row tree-dir">└─ 📁 ${DIR_REL}</div>
      <div class="tree-row">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;${esc(n.fac)} <span class="tree-dim">· ${items.length} hoja(s)</span></div>
-     ${has ? `<div class="tree-row">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;${esc(n.ap)} <span class="tree-dim">· ${AP.list.length} correo(s), todas sus hojas</span></div>` : ''}
+     ${apOrdered().length ? `<div class="tree-row">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;${esc(n.ap)} <span class="tree-dim">· ${apOrdered().length} correo(s), todas sus hojas</span></div>` : ''}
+     ${OT.doc && $('#optOtRel').checked ? `<div class="tree-row">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;${esc(n.ot)} <span class="tree-dim">· la OT original</span></div>` : ''}
      ${xl ? `<div class="tree-row">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;${esc(n.xl)}</div>` : ''}`;
 }
 $('#optXlsxRel').checked = store.get('xlsxRel', true);
 $('#optXlsxRel').addEventListener('change', () => { store.set('xlsxRel', $('#optXlsxRel').checked); renderLot(); });
+
+
+/* =====================================================================
+   ORDEN DE TRABAJO (OT): el mandante del lote
+   ===================================================================== */
+const OT = { doc: null };
+const otMap = () => OT.doc ? new Map(OT.doc.items.map(x => [x.key, x])) : null;
+const samePerson = (a, b) => { const w = s => normTxt(s || '').replace(/[^A-Z ]/g, ' ').split(/\s+/).filter(x => x.length > 1); const A = w(a), B = w(b); if (!A.length || !B.length) return true; const [s1, s2] = A.length <= B.length ? [A, B] : [B, A]; return s1.every(x => s2.includes(x)); };
+function parseOT(lines) {
+  const T = normTxt(lines.join(' \n ')), items = new Map(), myRuc = getMyRuc();
+  const head = /ORDEN\s+DE\s+[A-Z ]*?N[°ºO]?\s*([\d][\d\s-]{4,})/.exec(T);
+  const numFull = head ? head[1].replace(/\s+/g, '').replace(/-+$/, '') : '';
+  const fecha = (/FECHA\s*:\s*(\d{2}\/\d{2}\/\d{4})/.exec(T) || [])[1] || '';
+  const rucs = [...T.matchAll(/R\.?\s?U\.?\s?C\.?\s*:?\s*((?:10|15|16|17|20)\d{9})/g)].map(m => m[1]).filter(r => r !== myRuc);
+  const tot = /SON\s*:[^\n]*?S\/\s*([\d,]+\.\d{2})/.exec(T);
+  let clinica = '';
+  const iSr = lines.findIndex(l => /^\s*SRES\.?\s*:?\s*$/i.test(l) || /^\s*SRES\.?\s*:/i.test(l));
+  if (iSr >= 0) for (let j = iSr; j < Math.min(lines.length, iSr + 4) && !clinica; j++) { const seg = lines[j].replace(/^\s*SRES\.?\s*:?\s*/i, '').split(/\s{3,}/)[0].trim(); if (seg && /[A-Z]{3}/i.test(seg) && !/^AV\.?|^JR\.?|^CALLE|CORPAC|R\.?U\.?C/i.test(seg)) clinica = seg; }
+  for (const raw of lines) {
+    const L = normTxt(raw).replace(/\s+/g, ' ').trim();
+    const m = /^(\d{1,3})\s+(?:\d{6,}\s+)?(?:[A-Z]\.?[A-Z]?\.?\s*)?([A-Z0-9]*?)([FEB][A-Z0-9]{3})\s*-\s*(\d{1,10})\b(.*)$/.exec(L);
+    if (!m || !/\d/.test(m[3])) continue;
+    const n = +m[1], rest = m[5], key = tdKey(m[3], m[4]);
+    const pac = (/^\s*\/\s*([^/]+?)\s*(?:\/|$)/.exec(rest) || [])[1] || '';
+    const amts = (rest.match(/\d{1,3}(?:,\d{3})*\.\d{2,4}/g) || []).map(x => Number(x.replace(/,/g, '')));
+    if (!items.has(key)) items.set(key, { n, key, serie: m[3], num: m[4], raw: m[2] + m[3] + '-' + m[4], paciente: pac.replace(/\s+/g, ' ').trim(), bruto: amts[0] ?? null, igv: amts.length >= 3 ? amts[amts.length - 2] : null, total: amts.length ? amts[amts.length - 1] : null });
+  }
+  const list = [...items.values()].sort((a, b) => a.n - b.n);
+  return { num: numFull.split('-').pop() || numFull, numFull, fecha, ruc: rucs[0] || '', clinica, total: tot ? parseNum(tot[1]) : list.reduce((t, x) => t + (x.total || 0), 0), items: list };
+}
+async function readOT(file) {
+  const pdf = await openPdfJs(file); const lines = [];
+  try { for (let p = 1; p <= pdf.numPages; p++) lines.push(...await pageTextLines(await pdf.getPage(p))); return { pages: pdf.numPages, ...parseOT(lines) }; }
+  finally { try { pdf.destroy(); } catch {} }
+}
+async function otAdd(files) {
+  const f = [...files].find(isPdf); if (!f) return toast('Elige el PDF de la OT', 'warn');
+  try {
+    const d = await readOT(f);
+    if (!d.items.length) return toast('No encontré líneas de facturas en ese PDF. ¿Es la OT?', 'bad', 6000);
+    OT.doc = { file: f, name: f.name, ...d };
+    batch && batch.items.forEach(it => { delete it.incManual; });       // la OT nueva decide de nuevo qué entra
+    toast(`OT ${d.num}: ${d.items.length} factura(s) leídas`, 'ok');
+  } catch (e) { toast('No se pudo leer la OT: ' + (e.message || e), 'bad'); }
+  otRender(); apChanged();
+}
+function otRender() {
+  const d = OT.doc, w = $('#otWrap'); show(w, !!d); show($('#optOtRelWrap'), !!d);
+  $('#otCount').textContent = d ? `OT ${d.num} · ${d.items.length} factura(s)` : '';
+  if (!d) { w.innerHTML = ''; return; }
+  const suma = d.items.reduce((t, x) => t + (x.total || 0), 0), cuadra = Math.abs(suma - d.total) <= 0.05;
+  w.innerHTML = `<div class="aprow !items-start">
+    <span class="text-lg">📋</span>
+    <div class="min-w-0 flex-1">
+      <div class="text-xs font-bold">OT N° ${esc(d.numFull || d.num)} <span class="font-normal text-slate-500">· ${esc(d.fecha)} · ${d.pages} hoja(s)</span></div>
+      <div class="text-[11px] text-slate-600">${esc(d.clinica)}${d.ruc ? ' · RUC ' + esc(d.ruc) : ''}</div>
+      <div class="flex flex-wrap gap-1 mt-1.5">${statChip(`${d.items.length} factura(s)`, d.items.length > 35 ? 'b-bad' : 'b-blue')}${statChip(`Total S/ ${fmtMoney(d.total)}`, 'b-gray')}${cuadra ? statChip('✔ las líneas suman el total', 'b-ok') : statChip(`⚠ las líneas suman S/ ${fmtMoney(suma)}`, 'b-warn')}${d.items.length > 35 ? statChip('⚠ más de 35', 'b-bad') : ''}</div>
+      <details class="mt-1.5"><summary>Ver las ${d.items.length} líneas de la OT</summary>
+        <div class="overflow-auto max-h-64 custom-scroll mt-1.5"><table class="dt"><thead><tr><th>N°</th><th>Factura</th><th>Paciente</th><th class="text-right">Total</th></tr></thead><tbody>
+        ${d.items.map(x => `<tr><td class="px-2 text-slate-400">${x.n}</td><td class="px-2 mono font-bold">${esc(x.raw)}</td><td class="px-2">${esc(x.paciente)}</td><td class="px-2 num">${fmtMoney(x.total)}</td></tr>`).join('')}
+        </tbody></table></div></details>
+    </div>
+    <button class="btn btn-ghost btn-xs" id="otPv" title="Ver la OT">👁</button><button class="btn btn-danger btn-xs" id="otRm" title="Quitar la OT">✕</button></div>`;
+  $('#otPv').onclick = () => openPreview(d.file, 1);
+  $('#otRm').onclick = () => { OT.doc = null; batch && batch.items.forEach(it => { delete it.incManual; }); otRender(); apChanged(); };
+}
+const otBadge = it => !OT.doc ? '<span class="text-slate-300">—</span>' : it.ot ? `<span class="badge b-blue" title="${esc(it.ot.raw)} · ${esc(it.ot.paciente)} · S/ ${fmtMoney(it.ot.total)}">N° ${it.ot.n}</span>` : '<span class="badge b-gray" title="Esta factura no está en la OT">No está</span>';
+bindDrop($('#dzOt'), $('#inOt'), f => otAdd(f));
+$('#optOtRel').checked = store.get('otRel', true);
+$('#optOtRel').addEventListener('change', () => { store.set('otRel', $('#optOtRel').checked); renderLot(); });
+
+/* Memoria: si corriges el paciente de una factura, la app lo recuerda (por RUC y serie-número) para la próxima vez */
+const pacKey = r => { const k = keyOfRow(r); return k && r.ruc ? r.ruc + '|' + k : ''; };
+function memPac(r, v) {
+  const k = pacKey(r); if (!k) return; const m = store.get('pacMem', {}) || {};
+  delete m[k]; if (v) m[k] = v;
+  const ks = Object.keys(m); if (ks.length > 5000) ks.slice(0, ks.length - 5000).forEach(x => delete m[x]);
+  store.set('pacMem', m);
+}
+function recallPac(r) { const k = pacKey(r), v = k && (store.get('pacMem', {}) || {})[k]; if (v && v !== r.paciente) { r.paciente = v; r.pacManual = true; r.notas.push('Paciente según tu corrección anterior'); } }
+
+
+/* =====================================================================
+   ORGANIZAR PÁGINAS: ordenar (arrastrar), girar y quitar hojas de uno o varios PDF
+   ===================================================================== */
+const ORG = { pages: [], seq: 0, drag: null, srcSeq: 0 };
+const progOrg = Progress($('#progOrg'));
+async function orgThumb(pg) {                                            // miniatura con el giro aplicado (en caché por giro)
+  const key = pg.rot % 360; if (pg.thumbs[key]) return pg.thumbs[key];
+  const page = await pg.src.pdf.getPage(pg.p), base = page.getViewport({ scale: 1, rotation: (page.rotate + key) % 360 });
+  const vp = page.getViewport({ scale: 180 / Math.max(base.width, base.height), rotation: (page.rotate + key) % 360 });
+  const c = document.createElement('canvas'); c.width = Math.ceil(vp.width); c.height = Math.ceil(vp.height);
+  const ctx = c.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
+  await page.render({ canvasContext: ctx, viewport: vp }).promise;
+  return (pg.thumbs[key] = c.toDataURL('image/jpeg', 0.7));
+}
+async function orgAdd(files) {
+  const pdfs = [...files].filter(isPdf); if (!pdfs.length) return toast('Elige archivos PDF', 'warn');
+  for (const f of pdfs) {
+    try {
+      const pdf = await openPdfJs(f), src = { id: ++ORG.srcSeq, file: f, pdf, lib: null };
+      for (let p = 1; p <= pdf.numPages; p++) ORG.pages.push({ id: ++ORG.seq, src, p, rot: 0, thumbs: {} });
+      if (!$('#orgName').value) $('#orgName').value = f.name.replace(/\.pdf$/i, '') + '_organizado.pdf';
+    } catch (e) { toast(`No se pudo abrir ${f.name}`, 'bad'); }
+  }
+  orgRender();
+}
+function orgRender() {
+  show($('#orgTools'), ORG.pages.length > 0); $('#orgCount').textContent = ORG.pages.length;
+  const multi = new Set(ORG.pages.map(x => x.src.id)).size > 1, grid = $('#orgGrid');
+  grid.innerHTML = ORG.pages.map((pg, i) => `<div class="opg" draggable="true" data-id="${pg.id}">
+      <img alt="Hoja ${i + 1}" src="${pg.thumbs[pg.rot % 360] || ''}">
+      <span class="n">${i + 1}</span>${multi ? `<span class="src" title="${esc(pg.src.file.name)}">${esc(pg.src.file.name)} · p.${pg.p}</span>` : `<span class="src">hoja original ${pg.p}${pg.rot % 360 ? ` · ${pg.rot % 360}°` : ''}</span>`}
+      <div class="acts"><button data-o="l" title="Girar a la izquierda">⟲</button><button data-o="r" title="Girar a la derecha">⟳</button><button data-o="z" title="Ampliar">🔍</button><button data-o="del" title="Quitar hoja">✕</button></div></div>`).join('');
+  ORG.pages.forEach(async pg => { if (pg.thumbs[pg.rot % 360]) return; const url = await orgThumb(pg).catch(() => ''); const img = grid.querySelector(`[data-id="${pg.id}"] img`); if (img && url) img.src = url; });
+}
+$('#orgGrid').addEventListener('click', e => {
+  const b = e.target.closest('[data-o]'); if (!b) return; const id = +b.closest('.opg').dataset.id, i = ORG.pages.findIndex(x => x.id === id), pg = ORG.pages[i];
+  if (b.dataset.o === 'l') pg.rot = (pg.rot + 270) % 360; else if (b.dataset.o === 'r') pg.rot = (pg.rot + 90) % 360;
+  else if (b.dataset.o === 'del') ORG.pages.splice(i, 1); else if (b.dataset.o === 'z') return openPreview(pg.src.file, pg.p);
+  orgRender();
+});
+$('#orgGrid').addEventListener('dragstart', e => { const c = e.target.closest('.opg'); if (!c) return; ORG.drag = +c.dataset.id; c.classList.add('dragging'); e.dataTransfer.effectAllowed = 'move'; try { e.dataTransfer.setData('text/plain', 'pg'); } catch {} });
+$('#orgGrid').addEventListener('dragend', () => { ORG.drag = null; $$('#orgGrid .dragging,#orgGrid .dropbefore').forEach(n => n.classList.remove('dragging', 'dropbefore')); });
+$('#orgGrid').addEventListener('dragover', e => { if (ORG.drag == null) return; e.preventDefault(); $$('#orgGrid .dropbefore').forEach(n => n.classList.remove('dropbefore')); const c = e.target.closest('.opg'); if (c) c.classList.add('dropbefore'); });
+$('#orgGrid').addEventListener('drop', e => {
+  if (ORG.drag == null) return; e.preventDefault();
+  const c = e.target.closest('.opg'), from = ORG.pages.findIndex(x => x.id === ORG.drag); let to = c ? ORG.pages.findIndex(x => x.id === +c.dataset.id) : ORG.pages.length;
+  ORG.drag = null; if (from < 0 || from === to) return orgRender();
+  const [pg] = ORG.pages.splice(from, 1); if (from < to) to--; ORG.pages.splice(to, 0, pg); orgRender();
+});
+$('#orgRev').onclick = () => { ORG.pages.reverse(); orgRender(); };
+$('#orgRotAll').onclick = () => { ORG.pages.forEach(pg => pg.rot = (pg.rot + 90) % 360); orgRender(); };
+$('#orgClear').onclick = () => { ORG.pages.forEach(pg => { try { pg.src.pdf.destroy(); } catch {} }); ORG.pages = []; $('#orgName').value = ''; orgRender(); };
+$('#btnOrgSave').onclick = async () => {
+  if (!ORG.pages.length) return; const btn = $('#btnOrgSave'); btn.disabled = true; progOrg.start('Armando el PDF…');
+  try {
+    const out = await PDFLib.PDFDocument.create();
+    for (let i = 0; i < ORG.pages.length; i++) {
+      const pg = ORG.pages[i]; pg.src.lib ||= await loadLib(await pg.src.file.arrayBuffer());
+      const [cp] = await out.copyPages(pg.src.lib, [pg.p - 1]);                              // copia sin recomprimir
+      if (pg.rot % 360) cp.setRotation(PDFLib.degrees(((cp.getRotation().angle || 0) + pg.rot) % 360));
+      out.addPage(cp); progOrg.set(((i + 1) / ORG.pages.length) * 100, `Hoja ${i + 1} de ${ORG.pages.length}`);
+      if (i % 10 === 9) await tick();
+    }
+    download(pdfBlob(await out.save()), ensurePdfExt($('#orgName').value, 'Documento_organizado.pdf')); toast(`PDF de ${ORG.pages.length} hoja(s) descargado`, 'ok');
+  } catch (e) { toast('No se pudo armar el PDF: ' + (e.message || e), 'bad'); } finally { progOrg.hide(); btn.disabled = false; }
+};
+bindDrop($('#dzOrg'), $('#inOrg'), f => orgAdd(f));
 
 /* =====================================================================
    PESTAÑA 2 · UNIR PDFs
