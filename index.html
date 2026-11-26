@@ -698,6 +698,60 @@ function Progress(root, { cancellable = false } = {}) {
 
 // ---------- Utilidades PDF ----------
 const loadLib = buf => PDFLib.PDFDocument.load(buf, { ignoreEncryption: true, updateMetadata: false });
+
+/* ---------- Trabajo pesado de PDF en segundo plano (Web Worker): la pantalla no se congela ----------
+   Si el navegador no permite el worker, se hace igual en la página (más lento, pero funciona). */
+const PDFLIB_URL = 'https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js';
+const PDF_WORKER_SRC = `importScripts('${PDFLIB_URL}');
+const opt = { ignoreEncryption: true, updateMetadata: false };
+self.onmessage = async e => {
+  const { id, op, args } = e.data;
+  try {
+    const out = await PDFLib.PDFDocument.create(); let pages = 0;
+    if (op === 'first') {
+      const src = await PDFLib.PDFDocument.load(args.buf, opt); pages = src.getPageCount();
+      if (!pages) throw new Error('El PDF no tiene páginas');
+      const [p] = await out.copyPages(src, [0]); out.addPage(p);
+    } else {
+      for (const part of args.parts) {
+        const src = await PDFLib.PDFDocument.load(part.buf, opt);
+        (await out.copyPages(src, part.all ? src.getPageIndices() : part.pages)).forEach(p => out.addPage(p));
+      }
+    }
+    const bytes = await out.save();
+    self.postMessage({ id, ok: true, bytes, pages }, [bytes.buffer]);
+  } catch (err) { self.postMessage({ id, ok: false, err: String((err && err.message) || err) }); }
+};`;
+let pdfW = null, pdfWseq = 0; const pdfWcb = new Map();
+function pdfWorker() {
+  if (pdfW !== null) return pdfW;
+  try {
+    pdfW = new Worker(URL.createObjectURL(new Blob([PDF_WORKER_SRC], { type: 'text/javascript' })));
+    pdfW.onmessage = e => { const cb = pdfWcb.get(e.data.id); if (!cb) return; pdfWcb.delete(e.data.id); e.data.ok ? cb.res(e.data) : cb.rej(new Error(e.data.err)); };
+    pdfW.onerror = ev => { ev.preventDefault?.(); pdfW = false; pdfWcb.forEach(cb => cb.rej(new Error('worker no disponible'))); pdfWcb.clear(); };
+  } catch { pdfW = false; }
+  return pdfW;
+}
+function pdfJob(op, args, transfer) {
+  const w = pdfWorker(); if (!w) return Promise.reject(new Error('worker no disponible'));
+  return new Promise((res, rej) => { const id = ++pdfWseq; pdfWcb.set(id, { res, rej }); w.postMessage({ id, op, args }, transfer); });
+}
+async function firstPageBytes(buf) {                                     // 1ª hoja copiada tal cual (sin recomprimir)
+  try { const r = await pdfJob('first', { buf: buf.slice(0) }); return new Uint8Array(r.bytes); }
+  catch (e) {
+    if (/no tiene páginas/.test(e.message)) throw e;
+    const src = await loadLib(buf); if (src.getPageCount() < 1) throw new Error('El PDF no tiene páginas');
+    return (await subsetDoc(src, [0])).save();
+  }
+}
+async function mergeBytes(parts) {                                       // parts: [{ buf, pages:[…] } | { buf, all:true }]
+  try { const r = await pdfJob('merge', { parts }, parts.map(p => p.buf)); return new Uint8Array(r.bytes); }
+  catch (e) {
+    const out = await PDFLib.PDFDocument.create();
+    for (const p of parts) { const d = await loadLib(p.buf); (await out.copyPages(d, p.all ? d.getPageIndices() : p.pages)).forEach(pg => out.addPage(pg)); await tick(); }
+    return out.save();
+  }
+}
 async function openPdfJs(src) {                                         // src: File | ArrayBuffer
   const buf = src instanceof Blob ? await src.arrayBuffer() : src;
   return pdfjsLib.getDocument({ data: new Uint8Array(buf) }).promise;
@@ -977,7 +1031,7 @@ function parseInvoice(rawText, rawLines) {
   const rucs = []; let m; const rucRe = /(?:^|[^\d])((?:10|15|16|17|20)\d{9})(?!\d)/g;
   while ((m = rucRe.exec(T))) rucs.push({ ruc: m[1], ok: rucValido(m[1]), lab: /R\.?\s?U\.?\s?C\.?\s*(?:N[°ºO]\.?)?\s*[:.]?\s*$/.test(T.slice(Math.max(0, m.index - 18), m.index + 1)),
     cli: /(?:SE[ÑN]OR(?:\(?ES\)?)?|CLIENTE|ADQUIRI?ENTE|RECEPTOR|DESTINATARIO)\b[^]{0,60}$/.test(T.slice(Math.max(0, m.index - 70), m.index + 1)) });
-  let pool = rucs.filter(x => x.ruc !== myRuc); if (!pool.length) pool = rucs;
+  const pool = rucs.filter(x => x.ruc !== myRuc);                      // si solo está el RUC del cliente, mejor vacío que equivocado
   const emi = pool.find(x => x.lab && !x.cli) || pool.find(x => x.lab) || pool.find(x => x.ok && !x.cli) || pool.find(x => x.ok) || pool[0];
   if (emi) { r.ruc = emi.ruc; r.rucCliente = (rucs.find(x => x.ruc === myRuc) || rucs.find(x => x.ok && x.ruc !== emi.ruc) || {}).ruc || ''; }
 
@@ -995,12 +1049,13 @@ function parseInvoice(rawText, rawLines) {
   else {
     const alt = /(?:FACTURA|BOLETA|ELECTRONICA|COMPROBANTE|NOTA DE CREDITO|NOTA DE DEBITO)[^]{0,90}?(?:^|[^A-Z0-9])([FEB][A-Z0-9]{3})\s*(?:N[°ºO]\.?|NRO\.?|NUM\.?|#|:)?\s*(\d{4,10})(?!\d)/.exec(T);
     if (alt && /\d/.test(alt[1])) r.serie = `${alt[1]}-${alt[2]}`;
+    else for (const l of lines.slice(0, 12)) { const z = /^\s*([FEB]\d{3})\s+(\d{3,8})\s*$/.exec(normTxt(l)); if (z) { r.serie = `${z[1]}-${z[2]}`; break; } }
   }
   if (!r.tipo && r.serie) r.tipo = r.serie[0] === 'B' ? 'Boleta' : (r.serie[0] === 'F' || r.serie[0] === 'E') ? 'Factura' : '';
 
   // --- Fecha de emisión (junto a su etiqueta; si no, la primera fecha del documento)
   const dates = findDates(T);
-  const lab = /FECHA\s*(?:DE\s*)?(?:EMISION|EMIS\.?)?\s*[:.]?/g;
+  const lab = /(?:FECHA\s*(?:DE\s*)?(?:EMISION|EMIS\.?)?|F\.\s*EMISION|EMISION)\s*[:.]?/g;
   while ((m = lab.exec(T))) {
     if (/^\s*(?:VENC|PAGO|VTO|TRASLADO|INICIO)/.test(T.slice(lab.lastIndex, lab.lastIndex + 16))) continue;
     const d = dates.find(x => x.idx >= m.index && x.idx <= lab.lastIndex + 50);
@@ -1025,15 +1080,20 @@ function parseInvoice(rawText, rawLines) {
   for (const re of tiers) { const v = pick(scanAmounts(A, re, { skip: skipTotal })); if (v != null) { r.total = v; break; } }
   r.subtotal = pick(scanAmounts(A, /(?:OP\.?|OPERACION(?:ES)?)\s*GRAVAD[AO]S?/g)) ?? pick(scanAmounts(A, /TOTAL\s+GRAVAD[AO]S?/g)) ?? pick(scanAmounts(A, /SUB\s*TOTAL/g)) ?? pick(scanAmounts(A, /BASE\s+IMPONIBLE/g)) ?? pick(scanAmounts(A, /TOTAL\s+VALOR\s+DE\s+VENTA/g));
   r.igv = pick(scanAmounts(A, /(?:^|[^A-Z])I\.?\s?G\.?\s?V\.?(?![A-Z])/g, { win: 40 }));
-  if (r.total == null) {                                                 // último recurso: el mayor importe de la hoja
-    const all = [...A.matchAll(/\d{1,3}(?:[.,]\d{3})+[.,]\d{2}(?!\d)|\d+[.,]\d{2}(?!\d)/g)].map(x => parseNum(x[0])).filter(n => n != null);
-    if (all.length) { r.total = Math.max(...all); r.totalEstimado = true; }
-  }
+  const all = [...A.matchAll(/\d{1,3}(?:[.,]\d{3})+[.,]\d{2}(?!\d)|\d+[.,]\d{2}(?!\d)/g)].map(x => parseNum(x[0])).filter(n => n != null);
+  const letras = montoEnLetras(T);                                       // el monto en letras es la referencia más fiable (el OCR lee bien las palabras)
+  if (letras != null) {
+    if (r.total == null || Math.abs(r.total - letras) > 0.01) {
+      r.total = letras; r.totalEstimado = false;
+      if (!all.some(n => Math.abs(n - letras) <= 0.01)) r.notas.push('Total leído del monto en letras');
+    }
+  } else if (r.total == null && all.length) { r.total = Math.max(...all); r.totalEstimado = true; }   // último recurso: el mayor importe
+  if (r.total != null && r.igv != null && r.subtotal == null && r.igv < r.total) r.subtotal = Math.round((r.total - r.igv) * 100) / 100;
 
   // --- Razón social del emisor (heurística: primera línea del encabezado con forma societaria)
   const soc = /\b(?:S\.?\s?A\.?\s?C|S\.?\s?A\.?\s?A|S\.?\s?R\.?\s?L|E\.?\s?I\.?\s?R\.?\s?L|S\.?\s?C\.?\s?R\.?\s?L|S\.?\s?A)\b\.?/;
-  const segs = lines.slice(0, 14).flatMap(l => l.split(/\s{3,}/)).map(x => x.replace(/\s*\bR\.?\s?U\.?\s?C\b\.?.*$/i, '').trim()).filter(Boolean);
-  const cand = segs.find(l => soc.test(normTxt(l)) && !/FACTURA|BOLETA|R\.?U\.?C\b|SE[ÑN]OR|CLIENTE|ADQUIR|DIRECCI/i.test(normTxt(l)) && l.length < 90);
+  const segs = lines.slice(0, 12).flatMap(l => l.split(/\s{3,}/)).map(x => x.replace(/\s*\bR\.?\s?U\.?\s?C\b\.?.*$/i, '').trim()).filter(Boolean);
+  const cand = segs.find(l => soc.test(normTxt(l)) && !/FACTURA|BOLETA|R\.?U\.?C\b|SE[ÑN]OR|CLIENTE|ADQUIR|DIRECCI|CORPAC|AEROPUERTO/i.test(normTxt(l)) && !/\d|:/.test(l) && l.length < 90);
   if (cand) r.razon = cand;
 
   r.paciente = findPaciente(lines);
@@ -1041,37 +1101,85 @@ function parseInvoice(rawText, rawLines) {
   return r;
 }
 
-/* Paciente: valor junto a su etiqueta (PACIENTE / ASEGURADO / AFILIADO / BENEFICIARIO). Nunca el «Titular». */
-const PAC = /^(?:NOMBRE\s+DEL\s+PACIENTE|PACIENTE|ASEGURADO|AFILIADO|BENEFICIARIO)\b\s*[:.]?\s*(.*)$/;
-function findPaciente(lines) {
-  for (const l of lines) {
-    const sg = l.split(/\s{3,}/).map(x => x.trim()).filter(Boolean);
-    for (let i = 0; i < sg.length; i++) {
-      const m = PAC.exec(normTxt(sg[i])); if (!m) continue;
-      let v = m[1] ? sg[i].slice(sg[i].length - m[1].length) : (sg[i + 1] || '');   // resto del mismo bloque o el bloque siguiente
-      v = v.replace(/^[\s:;.\-–—|]+/, '').replace(/[|:;,.\s]+$/, '').replace(/\s+/g, ' ').trim();
-      if (/[A-Za-zÁÉÍÓÚÑáéíóúñ]{2}/.test(v) && v.length >= 4 && v.length <= 80 && !/^(EL MISMO|LA MISMA|-+)$/i.test(v) && !/\d{3}/.test(v)) return v.toUpperCase();
+/* Paciente: se busca su etiqueta en cualquier parte de la línea (PACIENTE, APELLIDOS Y NOMBRES, ASEGURADO, NOMBRE:),
+   el valor se corta donde empieza la siguiente etiqueta (CUARTO:, HC:, DNI…) y, si la etiqueta no trae un nombre,
+   se mira la línea de abajo (p. ej. «Paciente canceló el 10%…» seguido del nombre). Nunca el «Titular». */
+const PAC_TIERS = [/(?:^|[\s|(])(?:NOMBRE\s+DEL\s+PACIENTE|PACIENTE)\s*[:.]?\s*/, /(?:^|[\s|(])APELLIDOS\s+Y\s+NOMBRES?\s*[:.]?\s*/, /(?:^|[\s|(])(?:ASEGURADO|AFILIADO|BENEFICIARIO)\s*[:.]\s*/, /(?:^|[\s|(])NOMBRES?\s*:\s*/];
+const LBL_STOP = /\s(?:CUARTO|PRELIQ|HISTORIA|H\.\s?C\b|HC\b|DNI|EDAD|SEXO|FECHA|TITULAR|N[°ºO*9]\b|NRO|CAMA|PARENTESCO|SEGURO|POLIZA|CARNET|EMPRESA|ORDEN|CODIGO|COD\b|TELEF|TELF|DIRECCION|DOC\b|PLAN|CARTA|HABITACION|REGISTRO|LIQUIDACION|MONEDA|PROCEDENCIA|CIA\b|ESPECIALIDAD|MEDICO|TRATANTE|AUTORIZACION|ENCUENTRO|EXPEDIENTE|CENTRO|IDENTIDAD|ASEGURADO|TIPO|PRODUCTO|F\.\s?DESDE|DESDE|HASTA)\b.*$/;
+const NAME_BAD = /\b(?:APELLIDOS?|NOMBRES?|PACIENTE|TITULAR|DATOS|CANCELO|COASEGURO|SEGURO|CORPAC|SOLES|TOTAL|CLINICA|FACTURA|CONSULTA|SERVICIO|AEROPUERTOS|CORPORACION|COMERCIAL|CONVENIOS?|EL MISMO|LA MISMA|PROGRAMA|AMBULATORI[AO]|EMERGENCIA)\b/;
+const isNameLike = v => /^[A-ZÁÉÍÓÚÑÜ' .-]+$/.test(v) && v.split(' ').filter(w => w.length > 1).length >= 2 && v.length >= 6 && v.length <= 70 && !NAME_BAD.test(normTxt(v));
+function cleanName(raw, { strict = false } = {}) {
+  if (strict && /:/.test(raw)) return '';                                 // una línea con «Etiqueta:» no es un nombre suelto
+  let v = String(raw || '').replace(/^[\s:;.\-–—|]+/, '').split(/\s{3,}|\s\|/)[0];
+  const cut = normTxt(' ' + v).search(LBL_STOP); if (cut > 0) v = v.slice(0, cut - 1);
+  v = v.replace(/,/g, ' ').replace(/[|:;.\s-]+$/, '').replace(/\s+/g, ' ').trim().toUpperCase();
+  return isNameLike(v) ? v : '';
+}
+function findPacientes(lines) {                                         // todos los candidatos, en orden de confianza
+  const out = [];
+  for (let t = 0; t < PAC_TIERS.length; t++) {
+    for (let i = 0; i < lines.length; i++) {
+      const n = normTxt(lines[i]), m = PAC_TIERS[t].exec(n); if (!m) continue;
+      const alInicio = !n.slice(0, m.index).trim();                      // «Paciente canceló…» sí; «…presenta el paciente?» no
+      const v = cleanName(lines[i].slice(m.index + m[0].length)) || (t === 0 && alInicio && lines[i + 1] ? cleanName(lines[i + 1], { strict: true }) : '');
+      if (v && !out.includes(v)) out.push(v);
     }
   }
-  return '';
+  return out;
+}
+const findPaciente = lines => findPacientes(lines)[0] || '';
+const looksCut = n => { const w = String(n || '').split(' '), last = w[w.length - 1] || ''; return w.length >= 2 && last.length <= 2 && !/^(DE|LA|Y|DEL|EL)$/.test(last); };   // «FLOR DE MA»
+
+/* Monto en letras → número: «OCHENTA Y OCHO Y 59/100» = 88.59 · «MIL SETENTA Y OCHO CON 30/100» = 1078.30 */
+const NUMW = { CERO: 0, UN: 1, UNO: 1, UNA: 1, DOS: 2, TRES: 3, CUATRO: 4, CINCO: 5, SEIS: 6, SIETE: 7, OCHO: 8, NUEVE: 9, DIEZ: 10, ONCE: 11, DOCE: 12, TRECE: 13, CATORCE: 14, QUINCE: 15, DIECISEIS: 16, DIECISIETE: 17, DIECIOCHO: 18, DIECINUEVE: 19,
+  VEINTE: 20, VEINTIUN: 21, VEINTIUNO: 21, VEINTIDOS: 22, VEINTITRES: 23, VEINTICUATRO: 24, VEINTICINCO: 25, VEINTISEIS: 26, VEINTISIETE: 27, VEINTIOCHO: 28, VEINTINUEVE: 29,
+  TREINTA: 30, CUARENTA: 40, CINCUENTA: 50, SESENTA: 60, SETENTA: 70, OCHENTA: 80, NOVENTA: 90, CIEN: 100, CIENTO: 100, DOSCIENTOS: 200, TRESCIENTOS: 300, CUATROCIENTOS: 400,
+  QUINIENTOS: 500, SEISCIENTOS: 600, SETECIENTOS: 700, OCHOCIENTOS: 800, NOVECIENTOS: 900 };
+function montoEnLetras(T) {
+  const m = /\bSON\b[\s:.\-–—_]*((?:[A-Z]+\s+){0,14}?[A-Z]+)\s+(?:Y\s+|CON\s+)?(\d{2})\s*\/\s*1[0O]{2}/.exec(T); if (!m) return null;
+  let total = 0, cur = 0, any = false;
+  for (const w of m[1].split(/\s+/)) {
+    if (w === 'Y' || w === 'CON') continue;
+    if (w === 'MIL') { cur = (cur || 1) * 1000; total += cur; cur = 0; any = true; continue; }
+    if (w === 'MILLON' || w === 'MILLONES') { total = (total + (cur || 1)) * 1e6; cur = 0; any = true; continue; }
+    if (!(w in NUMW)) return null;                                       // palabra rara (OCR dañado): no se adivina
+    cur += NUMW[w]; any = true;
+  }
+  return any ? Math.round((total + cur + (+m[2]) / 100) * 100) / 100 : null;
 }
 
 /* Abreviatura del proveedor para nombrar expedientes (ej. COA). Prioridad: la que el usuario guardó para ese RUC;
    luego el dominio web impreso en la factura (www.coa.pe) si encaja con las iniciales de la razón social; si no, las iniciales. */
 const STOP_W = /^(DE|DEL|LA|LAS|LOS|EL|Y|E|EN|S|A|C|R|L|SAC|SA|SRL|EIRL|SAA|SCRL|S\.A\.C\.?|S\.A\.?|S\.R\.L\.?|E\.I\.R\.L\.?)$/;
-function guessAbrev(T, ruc, razon, lines = []) {
-  const saved = (store.get('abrevMap', {}) || {})[ruc]; if (saved) return saved;
-  // 1) nombre comercial «CLÍNICA X» del encabezado (antes del bloque del cliente): CLINICA MACSALUD → MACSALUD
-  const myRuc = getMyRuc();
-  for (const l of lines.slice(0, 18)) {
-    if (/SE[ÑN]OR|CLIENTE|ADQUIRI?ENTE|RECEPTOR/i.test(normTxt(l)) || l.includes(myRuc)) continue;   // el bloque del cliente no es la clínica
+function clinicFromLines(lines, max = 7) {                                // nombre comercial «CLÍNICA X» del encabezado: CLINICA MACSALUD → MACSALUD
+  const myRuc = getMyRuc(), head = lines.slice(0, max);
+  for (let i = 0; i < head.length; i++) {                                // logo en varias líneas: «CLÍNICA» / «PERUANO» / «AMERICANA»
+    const first = normTxt(head[i].split(/\s{3,}/)[0]).replace(/[^A-Z ]/g, ' ').trim();
+    if (!/(?:^|\s)CLINICA$/.test(first)) continue;
+    const parts = [];
+    for (let j = i + 1; j < Math.min(head.length, i + 3); j++) {
+      const sg = normTxt(head[j].split(/\s{3,}/)[0]).replace(/[^A-Z &'-]/g, ' ').replace(/\s+/g, ' ').trim();
+      if (!sg || /\b(?:AV|CALLE|JR|URB|RUC|R U C|FACTURA|TELF?|SEDE)\b/.test(sg) || sg.split(' ').length > 3) break;
+      parts.push(sg);
+    }
+    const name = parts.join(' ').trim();
+    if (name.length >= 3) return name;
+  }
+  for (const l of head) {                                  // solo el encabezado (las sedes del pie no cuentan)
+    if (/SE[ÑN]OR|CLIENTE|ADQUIRI?ENTE|RECEPTOR|SEDE/i.test(normTxt(l)) || l.includes(myRuc)) continue;   // el bloque del cliente no es la clínica
     for (const sg of l.split(/\s{3,}/)) {
+      if (/\b(?:AV|AVENIDA|CALLE|JR|URB|PROL|CARRETERA|NRO|TELF?|MZ)\b\.?/.test(normTxt(sg)) && !/^\W*CLINICA\b/.test(normTxt(sg))) continue;   // «Cusco: Av. Los Incas … Clínica San José» es una dirección
       const m = /(?:^|[^A-Z])CLINICA\s+([A-Z0-9][A-Z0-9 .&'-]{1,60})/.exec(normTxt(sg).replace(/\s+/g, ' '));
       if (!m) continue;
       const name = m[1].split(/\s+(?:DE LA|DE LOS|DEL|R\.?\s?U\.?\s?C)\b|\s+(?:S\.?\s?A\.?\s?C|S\.?\s?A\.?\s?A|S\.?\s?R\.?\s?L|E\.?\s?I\.?\s?R\.?\s?L|S\.?\s?A)\b\.?|[,(]/)[0].replace(/[ .-]+$/, '').split(' ').slice(0, 5).join(' ').trim();
-      if (name.length >= 3 && /[A-Z]{3}/.test(name)) return name;
+      if (name.length >= 3 && /[A-Z]{3}/.test(name) && !/\d/.test(name) && !/^(?:AV|AVENIDA|JR|JIRON|CALLE|CAL|PSJE?|PASAJE|URB|MZ|LOTE|CARRETERA|PROL)\b/.test(name)) return name;
     }
   }
+  return '';
+}
+function guessAbrev(T, ruc, razon, lines = []) {
+  const saved = (store.get('abrevMap', {}) || {})[ruc]; if (saved) return saved;   // lo que tú corregiste manda
+  const fromHead = clinicFromLines(lines); if (fromHead) return fromHead;
   const ini = normTxt(razon || '').replace(/[^A-Z0-9 ]/g, ' ').split(/\s+/).filter(w => w && !STOP_W.test(w)).map(w => w[0]).join('');
   const isSub = (a, b) => { let j = 0; for (const c of b) if (c === a[j]) j++; return a.length > 1 && j === a.length; };
   for (const m of T.matchAll(/WWW\.([A-Z0-9-]{2,20})\.(?:COM\.PE|ORG\.PE|GOB\.PE|EDU\.PE|PE|COM|ORG|NET)\b/g)) {
@@ -1107,12 +1215,27 @@ function computeFlags(r) {
 const TESS_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js';
 const loadScript = src => new Promise((res, rej) => { const s = document.createElement('script'); s.src = src; s.onload = res; s.onerror = () => rej(new Error('No se pudo descargar ' + src)); document.head.appendChild(s); });
 let ocrWorker = null, ocrLog = null;
+/* Limpieza de la imagen antes del OCR: escala de grises y estiramiento de contraste (sellos tenues, fondos grises, escaneos pálidos) */
+function prepOcr(canvas) {
+  try {
+    const ctx = canvas.getContext('2d', { willReadFrequently: true }), img = ctx.getImageData(0, 0, canvas.width, canvas.height), d = img.data, hist = new Uint32Array(256);
+    for (let i = 0; i < d.length; i += 4) { const g = (d[i] * 299 + d[i + 1] * 587 + d[i + 2] * 114) / 1000 | 0; d[i] = g; hist[g]++; }
+    const n = d.length / 4; let acc = 0, lo = 0, hi = 255;
+    for (let v = 0; v < 256; v++) { acc += hist[v]; if (acc > n * 0.002) { lo = v; break; } }
+    acc = 0; for (let v = 255; v >= 0; v--) { acc += hist[v]; if (acc > n * 0.002) { hi = v; break; } }
+    const k = hi > lo + 60 ? 255 / (hi - lo) : 1;                         // solo si el escaneo está pálido
+    for (let i = 0; i < d.length; i += 4) { const g = Math.max(0, Math.min(255, (d[i] - lo) * k)); d[i] = d[i + 1] = d[i + 2] = g; }
+    ctx.putImageData(img, 0, 0);
+  } catch {}
+  return canvas;
+}
 async function ocrCanvas(canvas) {
   if (!ocrWorker) {
     if (!window.Tesseract) await loadScript(TESS_URL);
     ocrWorker = await Tesseract.createWorker('spa', 1, { logger: m => ocrLog && ocrLog(m) });
+    try { await ocrWorker.setParameters({ preserve_interword_spaces: '1' }); } catch {}   // conserva los huecos entre columnas (etiqueta | valor)
   }
-  const { data } = await ocrWorker.recognize(canvas);
+  const { data } = await ocrWorker.recognize(prepOcr(canvas));
   return data.text || '';
 }
 async function disposeOcr() { if (ocrWorker) { try { await ocrWorker.terminate(); } catch {} ocrWorker = null; } }
@@ -1346,21 +1469,42 @@ async function analyzeFirstPage(buf, o, setStatus, fileName = '') {
     r.notas.push(...notas);
     if (!r.serie) { const fs = serieFromName(fileName); if (fs) { r.serie = fs; r.notas.push('Serie-número tomada del nombre del archivo'); } }
     if (!r.ruc) { const fr = rucFromName(fileName); if (fr) r.ruc = fr; }
-    if (!r.paciente && pdf.numPages > 1) {                                 // el paciente suele estar en la liquidación (hoja 2, 3…)
-      let ocrDone = 0;
-      for (let p = 2; p <= Math.min(pdf.numPages, 8) && !r.paciente; p++) {
+    let pag2 = null;                                                     // texto de la hoja 2 si se leyó (sirve también para el nombre de la clínica)
+    const cortado = r.paciente && looksCut(r.paciente);                  // «FLOR DE MA»: se busca el nombre completo en las hojas siguientes
+    if ((!r.paciente || cortado) && pdf.numPages > 1) {                  // el paciente suele estar en la liquidación (hoja 2, 3…)
+      let ocrDone = 0; const base = cortado ? r.paciente.split(' ').slice(0, -1).join(' ') : '';
+      for (let p = 2; p <= Math.min(pdf.numPages, cortado ? 3 : 8) && (!r.paciente || cortado); p++) {
         setStatus(`Buscando el paciente en la hoja ${p}…`);
         const pg = await pdf.getPage(p); let ls = await pageTextLines(pg);
         if (ls.join('').replace(/\s/g, '').length < 25) {
-          if (ocrDone >= 2 || !(o.ocr || /\{paciente\}/.test(namePattern(o)))) continue;
+          if (ocrDone >= 1 || !(o.ocr || /\{paciente\}/.test(namePattern(o)))) continue;   // como máximo 1 hoja escaneada (el OCR es lo más lento)
           ocrLog = m => { if (m.status === 'recognizing text') setStatus(`OCR hoja ${p}: ${Math.round(m.progress * 100)}%`); };
           ocrDone++;
           try { ls = (await ocrCanvas(await renderPage(pg, { maxSide: 2400 }))).split(/\n/).map(x => x.trim()).filter(Boolean); }
           catch (e) { ocrDone = 99; continue; }                           // si el OCR no está disponible, no se pierde el resto de la lectura
         }
-        const v = findPaciente(ls); if (v) { r.paciente = v; r.pacHoja = p; }
+        if (p === 2) pag2 = ls;
+        if (cortado) { const full = findPacientes(ls).find(v => v.startsWith(base) && v.length > r.paciente.length); if (full) { r.paciente = full; r.pacHoja = p; break; } }
+        else { const v = findPaciente(ls); if (v) { r.paciente = v; r.pacHoja = p; } }
       }
     }
+    // Nombre de la clínica cuando no está en texto: 1) memoria por RUC, 2) OCR de la franja superior (logo/encabezado), 3) encabezado de la hoja 2
+    const auto = store.get('abrevAuto', {}) || {};
+    if (!r.abrev && r.ruc && auto[r.ruc]) r.abrev = auto[r.ruc];
+    if (!r.abrev && !scanned && (o.ocr || /\{abrev\}/.test(namePattern(o)))) {
+      try {
+        setStatus('Leyendo el encabezado (logo) de la factura…');
+        const full = await renderPage(page, { maxSide: 2200 }), band = document.createElement('canvas');
+        band.width = full.width; band.height = Math.round(full.height * 0.26); band.getContext('2d').drawImage(full, 0, 0, band.width, band.height, 0, 0, band.width, band.height);
+        const hl = (await ocrCanvas(band)).split(/\n/).map(x => x.trim()).filter(Boolean), hT = normTxt(hl.join(' \n '));
+        if (!r.ruc) { const rr = [...hT.matchAll(/(?:^|[^\d])((?:10|15|16|17|20)\d{9})(?!\d)/g)].map(x => x[1]).find(x => x !== getMyRuc() && rucValido(x)); if (rr) r.ruc = rr; }
+        r.abrev = clinicFromLines(hl, 10) || '';
+        if (!r.abrev) { const rz = hl.find(l => /\b(?:S\.?\s?A\.?\s?C|S\.?\s?A|S\.?\s?R\.?\s?L|E\.?\s?I\.?\s?R\.?\s?L)\b/.test(normTxt(l)) && !/\d|:|CORPAC/.test(normTxt(l))); if (rz) { r.razon = r.razon || rz; r.abrev = guessAbrev('', r.ruc, rz, []); } }
+      } catch (e) { /* sin OCR disponible: se sigue sin el nombre */ }
+    }
+    if (!r.abrev && pag2) r.abrev = clinicFromLines(pag2, 10);
+    if (r.abrev && r.ruc && !(store.get('abrevMap', {}) || {})[r.ruc]) { auto[r.ruc] = r.abrev; store.set('abrevAuto', auto); }   // la app aprende el nombre de cada clínica
+
     if (o.ai && (text.length > 10 || getAiImage())) {
       try {
         setStatus('Consultando IA Gemini…');
@@ -1395,10 +1539,7 @@ async function processInvoices() {
       const rec = { id: e.id, name: e.file.name, file: e.file, singleBytes: null, row: null };
       try {
         const buf = await e.file.arrayBuffer();
-        const src = await loadLib(buf);
-        if (src.getPageCount() < 1) throw new Error('El PDF no tiene páginas');
-        const single = await subsetDoc(src, [0]);                       // copia directa de la página 1, sin recomprimir
-        rec.singleBytes = await single.save();
+        rec.singleBytes = await firstPageBytes(buf);                     // copia directa de la página 1, sin recomprimir (en segundo plano)
         if (o.extract) {
           try { rec.row = await analyzeFirstPage(buf, o, msg => progFact.text(`${msg} ${label}`), e.file.name); recallPac(rec.row); }
           catch (ex) { rec.row = { tipo: '', ruc: rucFromName(e.file.name), rucCliente: '', razon: '', paciente: '', abrev: '', serie: serieFromName(e.file.name), fecha: '', moneda: '', subtotal: null, igv: null, total: null, notas: [], metodo: 'Error', error: 'Error de lectura: ' + (ex.message || ex) }; }
@@ -1540,14 +1681,11 @@ function groupClinic(items) {                                            // nomb
 }
 const lotClinic = () => groupClinic(lotItems());
 const groupNames = g => { const c = groupClinic(g.items), custom = batch.opts.mergedName.trim();
-  return { ot: sanitizeName(`OT ${g.doc?.num || ''}`.trim()) + '.pdf', fac: ensurePdfExt(custom || `FACTURAS UNIDAS ${c}`.trim(), 'FACTURAS UNIDAS.pdf'), ap: ensurePdfExt(`APROBACIONES UNIDAS ${c}`.trim(), 'APROBACIONES UNIDAS.pdf'), xl: sanitizeName(`RELACION ${c}`.trim()) + '.xlsx' }; };
+  return { ot: sanitizeName(`OT ${g.doc?.num || ''}`.trim()) + '.pdf', fac: ensurePdfExt(custom || `FACTURAS UNIDAS ${c}`.trim(), 'FACTURAS UNIDAS.pdf'), ap: ensurePdfExt(`Aprob FACT ${c}`.trim(), 'Aprob FACT.pdf'), xl: sanitizeName(`RELACION ${c}`.trim()) + '.xlsx' }; };
 const lotNames = () => groupNames(lotGroups().find(g => g.items.length) || { items: [], doc: null });
 async function cached(sig, make) { batch._cache ||= new Map(); if (batch._cache.has(sig)) return batch._cache.get(sig); const v = await make(); batch._cache.set(sig, v); if (batch._cache.size > 40) batch._cache.delete(batch._cache.keys().next().value); return v; }
-const buildMergedLot = (items = lotItems()) => cached('F' + items.map(i => i.id).join(','), async () => {
-  const out = await PDFLib.PDFDocument.create();
-  for (const it of items) { const d = await PDFLib.PDFDocument.load(it.singleBytes); const [pg] = await out.copyPages(d, [0]); out.addPage(pg); }
-  return pdfBlob(await out.save());
-});
+const buildMergedLot = (items = lotItems()) => cached('F' + items.map(i => i.id).join(','), async () =>
+  pdfBlob(await mergeBytes(items.map(it => ({ buf: it.singleBytes.slice().buffer, pages: [0] })))));
 const apByNumber = list => { const low = ap => ap.facturas.map(f => [f.serie, +f.num]).sort((a, b) => a[0].localeCompare(b[0]) || a[1] - b[1])[0] || ['~', 0]; return list.sort((a, b) => { const x = low(a), y = low(b); return x[0].localeCompare(y[0]) || x[1] - y[1]; }); };
 function apFor(g) {                                                      // correos de ese grupo: con OT, los que aprueban alguna de sus facturas, en el orden de la OT
   if (g.doc) { const m = new Map(g.doc.items.map(x => [x.key, x.n])), first = ap => Math.min(...ap.facturas.map(f => m.get(f.key) ?? Infinity)); return AP.list.filter(ap => isFinite(first(ap))).sort((a, b) => first(a) - first(b)); }
@@ -1555,11 +1693,8 @@ function apFor(g) {                                                      // corr
   return apByNumber([...AP.list]);
 }
 const apOrdered = () => { const gs = lotGroups(); return [...new Set(gs.flatMap(apFor))]; };
-const buildAprobMerged = (list = apOrdered()) => cached('A' + list.map(a => a.id).join(','), async () => {
-  const out = await PDFLib.PDFDocument.create();
-  for (const ap of list) { const d = await loadLib(await ap.file.arrayBuffer()); (await out.copyPages(d, d.getPageIndices())).forEach(pg => out.addPage(pg)); }
-  return pdfBlob(await out.save());
-});
+const buildAprobMerged = (list = apOrdered()) => cached('A' + list.map(a => a.id).join(','), async () =>
+  pdfBlob(await mergeBytes(await Promise.all(list.map(async ap => ({ buf: await ap.file.arrayBuffer(), all: true }))))));
 async function packEntries({ full = true, one = true, merged = true, aprob = true, excel = null, ot = null } = {}) {
   computeOutNames(); const out = [];
   if (excel === null) excel = $('#optXlsxRel').checked && batch.opts.extract;
@@ -1781,6 +1916,7 @@ function applyApprovals() {
       if (r.pacOrig === undefined) r.pacOrig = r.paciente || '';
       r.otPac = it.ot ? it.ot.paciente : ''; r.otTotal = it.ot ? it.ot.total : null;
       if (!r.pacManual) r.paciente = (it.ot && it.ot.paciente) ? it.ot.paciente : r.pacOrig;
+      if (it.ot && !r.abrev && it.ot.doc.clinica) r.abrev = normTxt(it.ot.doc.clinica).replace(/^CLINICA\s+/, '').replace(/\s+(?:S\.?\s?A\.?\s?C|S\.?\s?A\.?\s?A|S\.?\s?R\.?\s?L|E\.?\s?I\.?\s?R\.?\s?L|S\.?\s?A)\b\.?$/, '').trim();
     }
     // con OT: entra lo que está en la OT (aunque el correo venga mal); sin OT: entra lo aprobado
     const def = !it.dup && (otm && it.ot ? true : (!has || it.ap.status === 'aprobada'));   // las que no están en ninguna OT van a «SIN OT» (si se marca)
